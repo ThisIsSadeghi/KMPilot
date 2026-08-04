@@ -14,7 +14,7 @@ Trackable execution plan for the 2026-H2 packaging work. One file per phase, one
 | 0 | [Quick wins](PHASE-0-quick-wins.md) | `phase-0-quick-wins` | ⬜ Not started |
 | 1 | [Deterministic arch checker](PHASE-1-arch-checker.md) | `phase-1-arch-checker` | ✅ Done ([#2](https://github.com/ThisIsSadeghi/KMPilot/pull/2)) |
 | 2 | [Adopt into an existing project](PHASE-2-adopt-mode.md) | `phase-2-adopt-mode` | ✅ Done ([#3](https://github.com/ThisIsSadeghi/KMPilot/pull/3)) |
-| 3 | [Plugin packaging](PHASE-3-plugin-packaging.md) | `phase-3-plugin-packaging` | ⬜ Not started |
+| 3 | [Plugin packaging](PHASE-3-plugin-packaging.md) | `phase-3-plugin-packaging` | ⏸ Built, parked — publishes after `migrate-feature` |
 | 4 | [HTML design source](PHASE-4-html-design-source.md) | `phase-4-html-design-source` | ⬜ Not started |
 | — | [Parked](PARKED.md) | — | ⏸ Deliberately unscheduled |
 | — | [Adopt test backlog](ADOPT-TEST-BACKLOG.md) | — | 🔁 Living — project shapes still untried |

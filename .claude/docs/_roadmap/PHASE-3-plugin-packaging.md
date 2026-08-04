@@ -8,6 +8,54 @@
 
 **Branch:** `phase-3-plugin-packaging`
 
+> **Corrections — verified 2026-08-04 against a running plugin (Claude Code 2.1.220).**
+> Five assumptions below were written against docs, not against an installed plugin, and are wrong.
+> The implementation follows this list, not the prose further down:
+>
+> 1. **Plugin `agents/` is flat-only.** Nested `agents/{code-quality,feature-development,feature-testing}/`
+>    loads **zero** agents. The manifest `agents` field does not rescue it — with explicit file paths it
+>    still loads zero, and validates clean while doing so. Ship `agents/*.md` flat with **no** `agents` field.
+> 2. **`@relative.md` imports silently do not resolve in plugin skills** (they do in project skills).
+>    Every import needs `${CLAUDE_PLUGIN_ROOT}/…` on the plugin surface — so *paths* change too, not
+>    only invocation strings.
+> 3. **`${CLAUDE_PLUGIN_ROOT}` does substitute in skill and agent content**, so the model receives a
+>    real absolute path.
+> 4. **`commands/` needs no conversion** — a plugin loads flat `.md` files there as skills as-is.
+>    Step 1's `disable-model-invocation` migration is unnecessary.
+> 5. **Plugins cannot ship `CLAUDE.md`**, so the 14 rules never enter context in plugin mode. A
+>    `SessionStart` hook injects them instead.
+>
+> Two consequences the phase file misses: the plugin **copies nothing into the user's project**, so a
+> repo that has not run `install.sh --adopt` has no `core/` and cannot compile generated code (hence an
+> adoption preflight + `/kmpilot:adopt`); and `agents/_base/common.md` must leave `agents/` to pass
+> `validate --strict`.
+>
+> **Status — built, parked, not published (2026-08-04).**
+> The plugin is **finished and validating** (`claude plugin validate --strict` clean; 12 skills,
+> 11 agents, 2 hooks, 1 MCP server; proven end to end in a scratch repo that is not KMPilot).
+> It is **deliberately not on GitHub and not installable.**
+>
+> **Why parked:** the plugin's reason to exist is making *migration* easy. Until
+> `migrate-feature` ([PARKED.md](PARKED.md)) lands, publishing it would ship a namespaced copy
+> of what `install.sh` already does — and a marketplace debut does not get a second take.
+>
+> **Where it lives:** on the maintainer's machine only, gitignored —
+> `pipeline/src` (authored, shared), `pipeline/plugin-src` (authored, plugin-only),
+> `pipeline/dist` (the built plugin), `scripts/gen-surfaces.py` (the generator).
+> `.claude/{skills,agents,commands,hooks}` is **generated from `pipeline/src`** and committed as
+> the published artifact; edit the source, never `.claude/`. There is no CI drift check —
+> syncing is local. Full workflow: `pipeline/README.md` and `.claude/rules/pipeline-source.md`
+> (both gitignored).
+>
+> **What did ship publicly** from this phase: the initialization gate (the feature-file hook
+> refuses `feature/` writes in a repo with neither `.kmpilot.json` nor `core/common`, and an
+> active skill cannot bypass it) and `scripts/release.sh --dry-run`.
+>
+> **To publish**, when migration is ready: add `.claude-plugin/marketplace.json` at the repo
+> root with `"source": "./pipeline/dist"`, un-gitignore the tree, document both doors in
+> `README.md`, then submit to `anthropics/claude-plugins-community` **after** merge —
+> submissions pin a commit SHA. Steps in `pipeline/README.md`.
+>
 > **Before you start:** read [`README.md`](README.md) → *Branch and PR conventions* and *`update.sh` delivery tiers*. Phase 2 must be merged (see *Why after Phase 2* above).
 >
 > **Prerequisites — verified 2026-07-30, no action needed:**

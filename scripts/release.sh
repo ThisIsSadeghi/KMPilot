@@ -9,16 +9,42 @@
 # version is single-sourced and publishes install.sh + update.sh as assets.
 #
 # Usage: scripts/release.sh X.Y.Z
+#        scripts/release.sh --dry-run     # preflight only: verify the generated
+#                                         # surfaces match pipeline/, write nothing
 set -euo pipefail
 
+DRY_RUN=no
 VER="${1:-}"
-if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Usage: scripts/release.sh X.Y.Z" >&2
+if [[ "$VER" == "--dry-run" ]]; then
+    DRY_RUN=yes
+    VER=""
+elif [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Usage: scripts/release.sh X.Y.Z | scripts/release.sh --dry-run" >&2
     exit 1
 fi
 TAG="v$VER"
 
 cd "$(git rev-parse --show-toplevel)"
+
+# ── generated-tree gate (maintainer machines only) ──────────────────────────
+# `.claude/skills|agents|commands|hooks` is build output. Its source and the
+# generator are gitignored, so this check only runs where they exist; a clone
+# without them has nothing to verify and skips straight through. Releasing a
+# `.claude/` that no longer matches its source would ship stale skills, so where
+# the check can run it is a hard failure.
+if [[ -f scripts/gen-surfaces.py ]]; then
+    if ! python3 scripts/gen-surfaces.py --check; then
+        echo "Error: .claude/ is stale. Run: python3 scripts/gen-surfaces.py" >&2
+        exit 1
+    fi
+elif [[ "$DRY_RUN" == "yes" ]]; then
+    echo "Note: no generator on this machine — nothing to verify."
+fi
+
+if [[ "$DRY_RUN" == "yes" ]]; then
+    echo "✓ Dry run: nothing written."
+    exit 0
+fi
 
 [[ -z "$(git status --porcelain)" ]] || { echo "Error: working tree not clean — commit or stash first" >&2; exit 1; }
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && { echo "Error: tag $TAG already exists" >&2; exit 1; }
@@ -60,6 +86,10 @@ sedi "s|^\[Unreleased\]:.*|[Unreleased]: https://github.com/ThisIsSadeghi/KMPilo
 if ! grep -q "^\[$VER\]:" CHANGELOG.md; then
     printf '[%s]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/%s\n' "$VER" "$TAG" >> CHANGELOG.md
 fi
+
+# Re-run the generator so anything version-stamped in the build output picks up
+# the new VERSION. No-op on a machine without the source tree.
+[[ -f scripts/gen-surfaces.py ]] && python3 scripts/gen-surfaces.py
 
 git add VERSION gradle/libs.versions.toml iosApp/iosApp/Info.plist CHANGELOG.md
 git commit -m "Release $VER"

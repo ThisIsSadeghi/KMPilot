@@ -500,6 +500,14 @@ A PreToolUse hook (`.claude/hooks/protect-feature-files.sh`, registered in `.cla
 | Staleness | Marker auto-expires after 2 hours; hook removes stale markers |
 | Bypassed paths | `*/commonTest/*`, `*/desktopTest/*`, `*/androidTest/*`, `*/test/*`, any `build.gradle.kts` |
 
+**Initialization gate (checked before the marker).** If the project has neither
+`.kmpilot.json` nor `core/common`, the hook refuses every `feature/` write regardless of
+the marker — an active skill cannot bypass it. A repo can end up with the skills but
+without the `core/` modules they generate against, and a feature written there would
+import `Either`/`UiState`/`X*` from modules that do not exist. Fix: run
+`install.sh --adopt` from the repo root (see `ADOPTING.md`). A project created by
+`install.sh` through either door already satisfies this.
+
 **Skills that activate the marker:** `/create-feature`, `/modify-feature`. Both skills' allowlists include `Bash(touch:*)` and `Bash(rm -f /tmp/.claude-kmpilot-skill-active)`. Test agents write test files directly (bypassed by path rule), so they do NOT need the marker.
 
 If the hook blocks an edit, message shown: *"Blocked: Cannot edit feature source files directly. Use /create-feature or /modify-feature skill first."*
