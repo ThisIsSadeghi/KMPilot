@@ -11,6 +11,8 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-04
+
 ### Fixed
 
 - **[Tooling]** **The updater bootstrap no longer blocks itself.** `update.sh` is tracked, so
@@ -231,9 +233,10 @@ Kotlin Multiplatform + Compose Multiplatform.
   feature shape; reference features are stripped on install, so a fresh project
   starts on a Welcome screen.
 
-[Unreleased]: https://github.com/ThisIsSadeghi/KMPilot/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ThisIsSadeghi/KMPilot/compare/v0.2.1...HEAD
 [0.1.0]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.1.0
 [0.1.1]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.1.1
 [0.1.2]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.1.2
 [0.1.3]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.1.3
 [0.2.0]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.2.0
+[0.2.1]: https://github.com/ThisIsSadeghi/KMPilot/releases/tag/v0.2.1
