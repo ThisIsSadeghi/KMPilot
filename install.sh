@@ -1468,6 +1468,7 @@ adopt_write_manifest() {
   "catalogAccessor": "kmpilotLibs",
   "koinBootstrap": "${KOIN_BOOTSTRAP}",
   "adoptedCoreModules": ["core:common", "core:data", "core:designsystem"],
+  "managedFeatures": [],
   "templateRepo": "${TEMPLATE_REPO}",
   "upstreamPkg": "thisissadeghi",
   "upstreamName": "KMPilot",

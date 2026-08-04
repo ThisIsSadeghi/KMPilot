@@ -35,7 +35,18 @@ Don't spend manual time on these — spend it below.
 
 ## Untested, highest value first
 
-### 1. A repo that already has a `feature/` directory
+### 1. ~~A repo that already has a `feature/` directory~~ — DONE 2026-08-04
+
+Confirmed against `~/KMPProjects/bookshelf-featuredir` (bookshelf with `search`/`favorites`
+moved under `feature/`): the first `archTest` after adoption reported **10 errors** about
+pre-existing code — 6× R5 Material3 imports, 2× R8 missing `di/`, 2× R11b missing UiModel.
+All correct as rules, all a hostile first run.
+
+Fixed by `managedFeatures` in `.kmpilot.json`: features KMPilot did not generate are graded
+like `--baseline`. Same fixture now reports 0 errors / 12 warnings and passes, while a
+feature listed as managed still fails strictly.
+
+<details><summary>Original entry</summary>
 
 **The one gap knowingly left open.** The checker globs `feature/*/build.gradle.kts` and
 holds every match to all 19 rules. A project that already organises features that way gets
@@ -47,6 +58,8 @@ in mind.
 - **Check:** `./gradlew archTest` immediately after adopting.
 - **Likely fix:** record KMPilot-managed features in `.kmpilot.json` and check only those,
   or grade pre-existing ones at `--baseline` severity.
+
+</details>
 
 ### 2. Two plausible app modules
 

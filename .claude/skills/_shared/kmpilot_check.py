@@ -16,12 +16,22 @@ anyone who is not running Claude Code.
 Writes `.claude/docs/_project/check-report.json`. Exits 1 if any `error`-severity
 violation exists; warnings never fail the build.
 
-Two strictness tiers, one rule set. A KMPilot project — this repo included — is held
-to every rule as an `error`: the reference implementation has no standing to violate
-what it enforces. `--baseline` is the pre-adoption tier: identical checks, every
-error reported as a warning, exit code always 0. It answers "how far is this repo
-from the rules" for a codebase that has not migrated yet, without pretending the
-violations are not there.
+One rule set, three strictness tiers — leniency is scoped to code that never agreed
+to the rules, never to code KMPilot wrote.
+
+  strict      A KMPilot project, this repo included, is held to every rule as an
+              `error`. The reference implementation has no standing to violate what
+              it enforces.
+  --baseline  Identical checks, every error reported as a warning, exit code always
+              0. Answers "how far is this repo from the rules" for a codebase that
+              has not migrated yet, without pretending the violations are not there.
+  per-feature In an ADOPTED project, `.kmpilot.json` lists `managedFeatures` — the
+              features KMPilot generated. Anything else predates the pipeline and is
+              graded like `--baseline`: reported in full, never failing the build.
+              Otherwise the first `archTest` after adoption fails on working, shipped
+              code over rules its author never chose. Features KMPilot generates stay
+              strict, and the summary names every unenforced feature, so a generated
+              feature missing from the list is visible rather than silently exempt.
 
 Deliberately NOT mechanized — these stay judgment calls in `code-reviewer.md`:
 
@@ -1016,6 +1026,26 @@ def find_first_containing(root: Path, pattern: str, needle: str) -> Path | None:
     return None
 
 
+def resolve_managed_features(root: Path) -> list[str] | None:
+    """Features KMPilot generated, from `.kmpilot.json`. `None` when the key is
+    absent — a template project, or this repo, where every feature is KMPilot's
+    and strict grading is right.
+
+    An ADOPTED project usually has features that predate the pipeline. Holding
+    those to rules their author never agreed to means the first `archTest` after
+    adoption fails on working, shipped code, with nothing saying the violations
+    are pre-existing. So they are graded like `--baseline`: reported in full,
+    as warnings, never failing the build. `/create-feature` appends each feature
+    it generates, and those are enforced strictly."""
+    manifest = root / MANIFEST
+    if not manifest.is_file():
+        return None
+    m = re.search(r'"managedFeatures"\s*:\s*\[([^\]]*)\]', read(manifest))
+    if m is None:
+        return None
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
 def resolve_install_mode(root: Path) -> str:
     """`template` or `adopt` (absent manifest ⇒ template). Some integration points
     describe KMPilot's own app shell and cannot be demanded of a host project."""
@@ -1032,6 +1062,7 @@ def run(root: Path, features: list[str]) -> tuple[list[dict], dict]:
     ctx = {
         "root": root,
         "install_mode": resolve_install_mode(root),
+        "managed_features": resolve_managed_features(root),
         "pkg_prefix": resolve_pkg_prefix(root),
         "app_module": app_module,
         "app_gradle": Path(app_module) / "build.gradle.kts",
@@ -1133,6 +1164,18 @@ def main(argv: list[str]) -> int:
         return 2
 
     violations, ctx = run(root, features)
+    # Features that predate the pipeline are reported, never enforced.
+    managed = ctx.get("managed_features")
+    pre_existing: set[str] = set()
+    if managed is not None:
+        for v in violations:
+            if v["feature"] and v["feature"] not in managed:
+                pre_existing.add(v["feature"])
+                if v["severity"] == "error":
+                    v["severity"] = "warning"
+                    v["strictSeverity"] = "error"
+                    v["preExisting"] = True
+
     if args.baseline:
         for v in violations:
             if v["severity"] == "error":
@@ -1147,6 +1190,7 @@ def main(argv: list[str]) -> int:
         "pkgPrefix": ctx["pkg_prefix"],
         "features": features,
         "violations": violations,
+        "preExistingFeatures": sorted(pre_existing),
         "summary": {"error": errors, "warning": warnings, "checked": CHECK_COUNT},
     }
     # One fixed path so consumers (/review-feature, CI) can hardcode it. Written
@@ -1182,6 +1226,14 @@ def main(argv: list[str]) -> int:
             f"{CHECK_COUNT} checks · {scope} · {errors} error(s) · {warnings} warning(s)"
             + (" · baseline: errors reported as warnings" if args.baseline else "")
         )
+        if pre_existing:
+            # Loud on purpose: if a feature KMPilot generated ends up here, the
+            # gate is silently not enforcing it.
+            print(
+                f"{color.warning}note{color.off}: {', '.join(sorted(pre_existing))} "
+                f"predate{'s' if len(pre_existing) == 1 else ''} KMPilot "
+                f"(not in .kmpilot.json managedFeatures) — reported, not enforced"
+            )
         print(f"report: {args.report}")
         print(f"{tint}{color.bold}{verdict}{color.off} — exit {exit_code}")
 

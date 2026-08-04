@@ -89,6 +89,26 @@ acceptable here and not in the installer: the user invoked a skill, the change i
 one entry point, and it lands in the same reviewable diff as the feature. Report it
 explicitly in your summary — never leave it as a silent edit.
 
+## Adopted projects — record the feature as managed (conditional)
+
+**Gate**: `.kmpilot.json` contains a `managedFeatures` array (adopt mode writes it;
+template projects have no such key and need nothing here).
+
+Append `{featurename}` to it:
+
+```json
+"managedFeatures": ["bookdetail", "{featurename}"],
+```
+
+**Why it matters.** An adopted repo usually has features that predate KMPilot. The checker
+grades anything *not* in this list at warning severity — reported in full, never failing the
+build — because failing someone's working, shipped code on rules its author never agreed to
+is a hostile first run. Features KMPilot generates are held to every rule as an error.
+
+So a missing entry does not break anything loudly: it silently exempts the feature you just
+wrote from the gate. `archTest` prints a `note:` line naming every unenforced feature — if
+the one you just generated appears there, this step was skipped.
+
 ## Platform Module (Rule 14 — conditional)
 
 **Gate**: only when `platform` actually ran and produced an `expect/actual val platformModule` (profiles `platform-capability` / `mixed`, and `native-view` *with* a backing capability). A **pure `native-view` with no provider** has no `platformModule` — skip this step. When it exists, `platform` has already written the `platformModule` + the per-platform DataSource actuals; your job is to **register it**:

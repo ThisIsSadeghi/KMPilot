@@ -11,6 +11,17 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+### Changed
+
+- **[Tooling]** **Adopting no longer fails your build over code that predates KMPilot.**
+  `.kmpilot.json` gained `managedFeatures` — the features `/create-feature` generated. A
+  repo that already organises code under `feature/` used to get its existing, working
+  modules graded against all 14 rules on the first `archTest`, with nothing saying the
+  violations were pre-existing. Those are now reported in full but never enforced (the
+  `--baseline` treatment), while KMPilot-generated features stay strict. The summary names
+  every unenforced feature, so a generated one missing from the list is visible rather than
+  silently exempt.
+
 ## [0.2.0] — 2026-08-04
 
 Two doors instead of one, and a build that fails when the architecture drifts.
