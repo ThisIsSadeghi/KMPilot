@@ -11,6 +11,14 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+### Fixed
+
+- **[Tooling]** **The updater bootstrap no longer blocks itself.** `update.sh` is tracked, so
+  the documented `curl … -o update.sh` step modified the working tree — and the very next
+  command refused because the tree was not clean. The preflight now ignores a tree whose only
+  change is `update.sh`; anything else still refuses. The release notes also lead with the
+  precondition, since only projects installed before v0.1.2 need that step at all.
+
 ### Changed
 
 - **[Tooling]** **Adopting no longer fails your build over code that predates KMPilot.**
