@@ -85,6 +85,13 @@ jobs:
             skip               { next }
                                { print }
           ' body.md > body.tmp && mv body.tmp body.md
+          # Lift "### Breaking" OUT of the changelog body and into the Update
+          # section. Anyone updating reads Update, runs the command, and never
+          # scrolls to the bottom — which is exactly how a project ends up
+          # missing a required manual step. Say it where the action happens.
+          awk '/^### Breaking/{grab=1;next} grab&&/^#{2,3} /{grab=0} grab{print}' body.md > breaking.md
+          awk '/^### Breaking/{skip=1;next} skip&&/^#{2,3} /{skip=0} skip{next} {print}' body.md > body.tmp
+          mv body.tmp body.md
           # Prepend the install command so every release page leads with how to install.
           {
             echo "## Install"
@@ -100,14 +107,36 @@ jobs:
             echo "**Existing KMP app** — run from its root ([what works, what is refused](https://github.com/ThisIsSadeghi/KMPilot/blob/main/ADOPTING.md)):"
             echo
             echo '```bash'
+            echo "# compatibility report + exact file plan; writes nothing"
             echo "curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/download/${GITHUB_REF_NAME}/install.sh | bash -s -- --adopt --dry-run"
+            echo
+            echo "# apply it"
+            echo "curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/download/${GITHUB_REF_NAME}/install.sh | bash -s -- --adopt"
             echo '```'
             echo
+            # Pre-empt the obvious question: the manual step below applies to
+            # updates only, never to a fresh install or an adoption.
+            if [ -s breaking.md ]; then
+              echo "> Both doors give you \`./gradlew archTest\` automatically. Only **updating** projects need the manual step below."
+              echo
+            fi
             echo "## Update"
             echo
+            # When the updater itself changed, the "grab it first" step must outweigh
+            # the run commands visually -- otherwise the eye lands on the big code
+            # block below and skips the prerequisite.
             if [ "$UPDATER_CHANGED" = "yes" ]; then
-              echo "> **This release changes \`update.sh\`.** On a project installed before v0.1.2, grab the new updater first:"
-              echo "> \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.sh -o update.sh\`"
+              echo "> [!IMPORTANT]"
+              echo "> **Only if your project was installed before v0.1.2** (check"
+              echo "> \`kmpilotVersion\` in \`.kmpilot.json\`) — this release changes \`update.sh\`"
+              echo "> itself, and an updater that old cannot apply fixes it predates, so replace"
+              echo "> it first. **On 0.1.2 and later this happens automatically: skip this step.**"
+              echo ">"
+              echo "> \`\`\`bash"
+              echo "> curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.sh -o update.sh"
+              echo "> \`\`\`"
+              echo
+              echo "**Then:**"
               echo
             fi
             echo '```bash'
@@ -118,6 +147,16 @@ jobs:
             echo
             echo "Never touches \`feature/\`, your app modules, or your specs, and never commits."
             echo
+            if [ -s breaking.md ]; then
+              echo "> [!WARNING]"
+              echo "> **This release needs a manual step that \`update.sh\` cannot do for you.**"
+              echo "> Details immediately below — skipping it leaves the feature unavailable."
+              echo
+              echo "### Manual step for this release"
+              echo
+              cat breaking.md
+              echo
+            fi
             echo "## What's changed"
             echo
             cat body.md
