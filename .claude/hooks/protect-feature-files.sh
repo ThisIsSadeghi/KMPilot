@@ -15,6 +15,16 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 
 # Only check files under feature/ directories
 if [[ "$FILE_PATH" == *"/feature/"* ]] || [[ "$FILE_PATH" == feature/* ]]; then
+  # Initialization gate. A repo can end up with the skills but without the core/
+  # modules they generate against — no Either, UiState or X-components for the
+  # generated code to import. Writing a feature there produces something that
+  # cannot compile, so refuse before the first file lands rather than after the
+  # build breaks. A project set up by install.sh (either door) has both.
+  if [[ ! -f .kmpilot.json && ! -d core/common ]]; then
+    echo "Blocked: KMPilot is not initialized in this project (no .kmpilot.json, no core/common), so a generated feature would import Either/UiState/X* from modules that are not here. Run the installer from this repo's root first: curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/latest/download/install.sh | bash -s -- --adopt   (see ADOPTING.md)" >&2
+    exit 2
+  fi
+
   # Allow test files (commonTest, desktopTest, androidTest) - test agents write these directly
   if [[ "$FILE_PATH" == *"/commonTest/"* ]] || [[ "$FILE_PATH" == *"/desktopTest/"* ]] || [[ "$FILE_PATH" == *"/androidTest/"* ]] || [[ "$FILE_PATH" == *"/test/"* ]]; then
     exit 0

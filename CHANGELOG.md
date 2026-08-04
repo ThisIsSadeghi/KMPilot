@@ -11,6 +11,16 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+### Changed
+
+- **[Tooling]** **Feature writes are blocked in an uninitialized project.** The
+  feature-file hook now refuses every `feature/` write in a repo with neither
+  `.kmpilot.json` nor `core/common`, naming the installer command to fix it. A project
+  created by `install.sh` through either door already satisfies this, so nothing changes
+  for existing users — it exists so a pipeline that arrives without the `core/` modules
+  cannot silently generate code that imports `Either`, `UiState` and `X*` from modules
+  that are not there.
+
 ## [0.2.1] — 2026-08-04
 
 ### Fixed

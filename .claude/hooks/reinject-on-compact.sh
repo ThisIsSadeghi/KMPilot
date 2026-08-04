@@ -2,12 +2,17 @@
 # reinject-on-compact.sh
 # Re-injects critical architecture rules after context compaction.
 # Used as a SessionStart hook with "compact" matcher.
+#
+# The heading is overridable via KMPILOT_RULES_HEADING so another hook can reuse
+# this digest without the text claiming a compaction that did not happen. The
+# rules themselves are defined once, here.
 
 # Clean up stale skill marker on compaction
 rm -f /tmp/.claude-kmpilot-skill-active
 
+printf '## %s\n' "${KMPILOT_RULES_HEADING:-Critical Architecture Rules (Re-injected After Compaction)}"
+
 cat <<'RULES'
-## Critical Architecture Rules (Re-injected After Compaction)
 
 **14 Rules:**
 1. Interface + Impl pairs for DataSource/Repository
@@ -32,6 +37,9 @@ cat <<'RULES'
 4. BaseAppNavHost.kt - {featurename}(onBackClick = {...})
 
 **Mandatory Workflow:** NEVER edit feature/ files directly. Use /create-feature or /modify-feature.
-
-Full patterns: @.claude/skills/_shared/patterns.md
 RULES
+
+# Emitted outside the quoted heredoc, which must stay quoted — the digest above
+# is full of backticks that an unquoted heredoc would treat as command
+# substitution. The `@` prefix asks Claude Code to inline the file.
+printf '\nFull patterns: @%s\n' ".claude/skills/_shared/patterns.md"
