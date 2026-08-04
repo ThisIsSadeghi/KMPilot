@@ -306,13 +306,21 @@ fi
 
 # ── preflight: clean working tree (so merge results are reviewable) ─────────
 if [[ "$DRY_RUN" == "no" ]]; then
-    if ! git -C "$ROOT" diff --quiet 2>/dev/null || ! git -C "$ROOT" diff --cached --quiet 2>/dev/null; then
+    # `update.sh` is tracked, so the documented bootstrap for pre-0.1.2 projects
+    #   curl …/update.sh -o update.sh
+    # dirties the tree by itself — and the very next command used to refuse
+    # because of it. A tree whose ONLY change is the updater is clean enough:
+    # this run is about to overwrite that file anyway.
+    DIRTY_PATHS="$(git -C "$ROOT" status --porcelain -- . 2>/dev/null | awk '{print $NF}' | grep -v '^update\.sh$' || true)"
+    if [[ -n "$DIRTY_PATHS" ]]; then
         if [[ "$STASH" == "yes" ]]; then
             git -C "$ROOT" stash push -u -m "kmpilot-update" >/dev/null; STASHED=yes
             info "stashed your working changes"
         else
             die "working tree not clean. Commit or stash first, or pass --stash."
         fi
+    elif ! git -C "$ROOT" diff --quiet -- update.sh 2>/dev/null; then
+        info "update.sh is modified (the bootstrap step) — continuing; this run replaces it"
     fi
     # stray artifact from an aborted earlier run — the bootstrap supersedes it
     rm -f update.sh.new
