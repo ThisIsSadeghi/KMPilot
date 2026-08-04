@@ -35,9 +35,15 @@
 > 11 agents, 2 hooks, 1 MCP server; proven end to end in a scratch repo that is not KMPilot).
 > It is **deliberately not on GitHub and not installable.**
 >
-> **Why parked:** the plugin's reason to exist is making *migration* easy. Until
-> `migrate-feature` ([PARKED.md](PARKED.md)) lands, publishing it would ship a namespaced copy
-> of what `install.sh` already does — and a marketplace debut does not get a second take.
+> **Why parked:** the plugin's reason to exist is making *migration* easy. Until migration lands,
+> publishing it would ship a namespaced copy of what `install.sh` already does — and a marketplace
+> debut does not get a second take.
+>
+> **Unpark trigger (set 2026-08-04):** [Phase 6](PHASE-6-project-migration.md) **Stage B**
+> (`/kmp-to-kmpilot`). Stage B discovers, plans and rewrites an existing project from inside it,
+> which `install.sh` structurally cannot do — so the "namespaced copy" objection expires the
+> moment it lands. Waiting for Stage C (Android) is **not** required. Final command names must be
+> settled before publishing: the plugin fixes them publicly.
 >
 > **Where it lives:** on the maintainer's machine only, gitignored —
 > `pipeline/src` (authored, shared), `pipeline/plugin-src` (authored, plugin-only),

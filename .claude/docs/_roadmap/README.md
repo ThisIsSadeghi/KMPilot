@@ -14,10 +14,12 @@ Trackable execution plan for the 2026-H2 packaging work. One file per phase, one
 | 0 | [Quick wins](PHASE-0-quick-wins.md) | `phase-0-quick-wins` | ⬜ Not started |
 | 1 | [Deterministic arch checker](PHASE-1-arch-checker.md) | `phase-1-arch-checker` | ✅ Done ([#2](https://github.com/ThisIsSadeghi/KMPilot/pull/2)) |
 | 2 | [Adopt into an existing project](PHASE-2-adopt-mode.md) | `phase-2-adopt-mode` | ✅ Done ([#3](https://github.com/ThisIsSadeghi/KMPilot/pull/3)) |
-| 3 | [Plugin packaging](PHASE-3-plugin-packaging.md) | `phase-3-plugin-packaging` | ⏸ Built, parked — publishes after `migrate-feature` |
+| 3 | [Plugin packaging](PHASE-3-plugin-packaging.md) | `phase-3-plugin-packaging` | ⏸ Built, parked — publishes after Phase 6 Stage B |
 | 4 | [HTML design source](PHASE-4-html-design-source.md) | `phase-4-html-design-source` | ⬜ Not started |
+| 5 | [Adopt hardening](PHASE-5-adopt-hardening.md) | `phase-5-adopt-hardening` | ⬜ Not started — **next** |
+| 6 | [Project migration](PHASE-6-project-migration.md) | `phase-6-kmp-to-kmpilot`, then `phase-6-android-to-kmpilot` | ⬜ Not started |
 | — | [Parked](PARKED.md) | — | ⏸ Deliberately unscheduled |
-| — | [Adopt test backlog](ADOPT-TEST-BACKLOG.md) | — | 🔁 Living — project shapes still untried |
+| — | [Adopt test backlog](ADOPT-TEST-BACKLOG.md) | — | 🔁 Living — Phase 5's checklist |
 
 Legend: ⬜ Not started · 🔵 In progress · 🟡 In review (PR open) · ✅ Done · ⏸ Parked
 
@@ -44,6 +46,8 @@ read .claude/docs/_roadmap/PHASE-1-arch-checker.md and start it
 | 2 | A **scratch KMP target repo** outside KMPilot, and its path |
 | 3 | *(none — CLI support verified)* |
 | 4 | A **Figma dev-mode HTML export** fixture, and its path |
+| 5 | *(none — fixtures are generated; the three real repos already exist)* |
+| 6 | Stage B: the hand-built test projects you intend to add, and **confirmation of the migration plan** each run produces. Stage C: an **open-source Android app** (publishable transcript) and the private app you migrate against |
 
 **One file at a time.** Reading all seven costs ~1000 lines of context for phases you are not working on. This `README.md` alone is enough to see where things stand.
 
@@ -71,7 +75,7 @@ Roughly 1 in 6 landing visitors opens `.claude/` to read the pipeline. None of t
 |---|---|---|---|
 | Start | `install.sh` (exists) | Greenfield KMP | 1× |
 | **Adopt** | Phase 2 | Existing KMP app | ~10× |
-| Migrate | Parked (`migrate-feature`) | Android app wanting iOS | ~10–50× |
+| Migrate | [Phase 6](PHASE-6-project-migration.md) (`/android-to-kmpilot`) | Android app wanting iOS | ~10–50× |
 
 ---
 
