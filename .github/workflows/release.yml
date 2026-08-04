@@ -60,7 +60,7 @@ jobs:
             echo "::error::published installer lost its --adopt door"; exit 1
           fi
 
-      - name: Build release notes (install command on top, then changelog)
+      - name: Build release notes (install + update on top, then changelog)
         run: |
           VER="${GITHUB_REF_NAME#v}"
           # Did this release change the updater? Only then do the notes lead with
@@ -89,42 +89,34 @@ jobs:
           {
             echo "## Install"
             echo
-            echo "Run the installer — it prompts you for the project name and package, then walks each step (clone → trim → rename → docs → git), validating as it goes:"
+            echo "**New app** — prompts for the project name and package:"
             echo
             echo '```bash'
             echo "curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/download/${GITHUB_REF_NAME}/install.sh | bash"
             echo '```'
             echo
-            echo "Prefer to pass them up front (scriptable, non-interactive)? Give them as arguments — \`<MyApp>\` is the project name (folder, root project, Android app label); \`<com.acme.myapp>\` the package prefix / application ID (\`namespace\`, \`applicationId\`, source-set package roots):"
+            echo "Non-interactive: \`| bash -s <MyApp> <com.acme.myapp>\`"
+            echo
+            echo "**Existing KMP app** — run from its root ([what works, what is refused](https://github.com/ThisIsSadeghi/KMPilot/blob/main/ADOPTING.md)):"
             echo
             echo '```bash'
-            echo "curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/download/${GITHUB_REF_NAME}/install.sh \\"
-            echo "  | bash -s <MyApp> <com.acme.myapp>"
+            echo "curl -fsSL https://github.com/ThisIsSadeghi/KMPilot/releases/download/${GITHUB_REF_NAME}/install.sh | bash -s -- --adopt --dry-run"
             echo '```'
-            echo
-            echo "> Always-latest instead: \`releases/latest/download/install.sh\` · bleeding edge: \`KMPILOT_TEMPLATE_BRANCH=main\`"
             echo
             echo "## Update"
             echo
-            echo "Already have a project from \`install.sh\`? Pull this release into it:"
-            echo
             if [ "$UPDATER_CHANGED" = "yes" ]; then
-              echo "**This release changes \`update.sh\` itself.** On a project installed before v0.1.2,"
-              echo "update the updater first — old updaters can't apply fixes they predate (from v0.1.2"
-              echo "onward this happens automatically):"
-              echo
-              echo '```bash'
-              echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.sh -o update.sh"
-              echo '```'
+              echo "> **This release changes \`update.sh\`.** On a project installed before v0.1.2, grab the new updater first:"
+              echo "> \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.sh -o update.sh\`"
               echo
             fi
             echo '```bash'
-            echo "./update.sh            # tooling only — .claude skills/agents/hooks, CLAUDE.md, gradle wrapper"
-            echo "./update.sh --core     # also merge core/ modules (rename-aware; conflicts are surfaced, never silent)"
-            echo "./update.sh --dry-run  # preview what would change; writes nothing"
+            echo "./update.sh            # tooling only"
+            echo "./update.sh --core     # also merge core/ (conflicts surfaced, never silent)"
+            echo "./update.sh --dry-run  # preview; writes nothing"
             echo '```'
             echo
-            echo "It never touches \`feature/\`, your app modules, or your per-feature specs, and never commits — review \`git diff\`, resolve any \`<<<<<<<\` markers, then commit. See upgrade notes below (tagged \`[Tooling]\` / \`[Core]\` / \`[Breaking]\`)."
+            echo "Never touches \`feature/\`, your app modules, or your specs, and never commits."
             echo
             echo "## What's changed"
             echo
