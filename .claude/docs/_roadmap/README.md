@@ -10,7 +10,7 @@ Trackable execution plan for the 2026-H2 packaging work. One file per phase, one
 
 | Phase | File | Branch | Status |
 |---|---|---|---|
-| — | Scaffold (this directory) | `roadmap-scaffold` → merged locally into `main-github` | 🔵 In progress |
+| — | Scaffold (this directory) | `roadmap-scaffold` → merged into `main` | ✅ Done |
 | 0 | [Quick wins](PHASE-0-quick-wins.md) | `phase-0-quick-wins` | ⬜ Not started |
 | 1 | [Deterministic arch checker](PHASE-1-arch-checker.md) | `phase-1-arch-checker` | ✅ Done ([#2](https://github.com/ThisIsSadeghi/KMPilot/pull/2)) |
 | 2 | [Adopt into an existing project](PHASE-2-adopt-mode.md) | `phase-2-adopt-mode` | ✅ Done ([#3](https://github.com/ThisIsSadeghi/KMPilot/pull/3)) |
@@ -91,7 +91,6 @@ Roughly 1 in 6 landing visitors opens `.claude/` to read the pipeline. None of t
 | Checker delivery | Python script (`.claude/skills/_shared/`) + thin Gradle `Exec` task | `.claude/skills` is an `update.sh` **OVERRIDE** path → auto-delivers to existing installs with zero conflicts |
 | Checker strictness | **Two tiers, one rule set.** A KMPilot project — this repo included — is held to every rule as an `error`. `--baseline` (same checks, errors reported as warnings, exit 0) is the pre-adoption tier | Decided 2026-07-31 while landing Phase 1. Leniency belongs to codebases that have not migrated yet, never to the reference implementation — a template that exempts itself from a rule cannot enforce it. Pre-existing violations get fixed, not downgraded. `--baseline` is also what Phase 2's compatibility report consumes |
 | Phase landing | Branch → PR → merge, one phase at a time | CI gate before merge, public review trail, each phase independently revertable |
-| Bitbucket mirror | **Ignored** for the whole roadmap | `origin-bitbucket/main` is behind at `edea204`; re-syncing is a separate decision |
 
 ---
 
@@ -101,23 +100,22 @@ Roughly 1 in 6 landing visitors opens `.claude/` to read the pipeline. None of t
 
 ```bash
 # start a phase
-git switch main-github && git pull origin-github main
+git switch main && git pull
 git switch -c phase-N-<slug>
 # … work; commit locally as often as useful; do NOT push …
 
 # phase finished (every exit-criteria box ticked)
-git push -u origin-github phase-N-<slug>
+git push -u origin phase-N-<slug>
 gh pr create --repo ThisIsSadeghi/KMPilot --base main --head phase-N-<slug>
 # merge on GitHub, then resync:
-git switch main-github && git pull origin-github main
+git switch main && git pull
 ```
 
 - **Do not push mid-phase.** No WIP branches on origin. If a phase is abandoned, the branch is deleted locally and nothing was ever published.
-- **Two remotes exist.** `origin-github` (`ThisIsSadeghi/KMPilot`, canonical) and `origin-bitbucket` (`nalacard/kmpilot`, mirror, deliberately untouched). Always name the remote explicitly — a bare `git push` is ambiguous here.
-- There is **no local branch named `main`**. `main-github` tracks `origin-github/main`.
+- **One remote.** `origin` → `ThisIsSadeghi/KMPilot`. Local `main` tracks `origin/main`.
 - **Claude never commits or pushes.** Changes are prepared and diffed; every `git commit` / `git push` / merge is driven by hand.
 - A phase's PR merges before the next branch is cut, so the status table above always reflects reality.
-- Local `main-github` may sit ahead of `origin-github/main` between phases (e.g. this scaffold was merged locally). That is expected on a solo repo and fast-forwards on the next push.
+- Local `main` may sit ahead of `origin/main` between phases — a docs-only commit (a status-table update, say) is left local so it reaches GitHub through the next phase's PR and its CI, rather than around it.
 
 ---
 
