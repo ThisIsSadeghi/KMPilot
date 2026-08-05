@@ -34,7 +34,20 @@ Plan was: spend $30 on a pilot, read the real `usage` fields, then price the mat
 
 ---
 
-## ⏸ `/kmpilot:migrate-feature` — Android → KMP
+## ➡️ `migrate-feature` — Android → KMP — **unparked 2026-08-04**
+
+Scheduled as [Phase 6](PHASE-6-project-migration.md), split into two stages: `/kmp-to-kmpilot`
+(shape only, no Android) then `/android-to-kmpilot` (platform translation). Gated on
+[Phase 5](PHASE-5-adopt-hardening.md). Stage B landing unparks the Phase 3 plugin.
+
+**The bounded input below was reversed the same day** — migration is **project-scoped**, not one
+feature package. The reasoning that produced the bound is still correct and still governs the
+phase; it is now honoured by *staging* rather than by narrow input. The command takes a whole
+project, and the **rewrite unit stays one feature at a time**, in a dependency order the run plans
+and a human confirms. See the phase file → *Project-scoped, not feature-scoped*. The original entry
+is kept below for the rest of its reasoning.
+
+
 
 The largest reach idea available, and the loudest headline: *"port your Android app to iOS one feature at a time."* Android developers outnumber KMP developers by 10–50×, and the Kotlin/Google community actively amplifies KMP-adoption content, so it is in-pool by construction.
 
@@ -109,5 +122,5 @@ Label a GitHub issue `feature`, CI opens a PR containing the module, spec, and t
 | **Screenshot → design input** | `/verify-ui` audits code ↔ HTML. HTML inferred from a PNG makes that audit circular and quietly falsifies the "verified against the design" claim — it would undermine the feature that makes KMPilot worth using. `--from-html` (Phase 4) is the correct abstraction |
 | **Stack-agnostic core extraction** | Makes KMPilot the 500th generic AI-coding pipeline, and the measured data says general audiences do not convert for this project (HN: largest reach of the launch, +0 stars). Generalize in the writing, not the code |
 | **Android-only / Compose-only variant** | Splits maintenance, dilutes the name, adds no story that Phase 2 + migrate-feature do not already tell |
-| **Full-app Android→KMP migrator** | Unbounded legacy is where coding agents fail hardest. See the bounded wedge above |
+| ~~**Full-app Android→KMP migrator**~~ **— reversed 2026-08-04** | Was: unbounded legacy is where coding agents fail hardest. Now scheduled as [Phase 6](PHASE-6-project-migration.md), which takes the **whole project** as input. The objection is answered structurally instead of by scope: discovery writes nothing, a human confirms the plan before any write, and features are rewritten one at a time in dependency order. A single-pass whole-app rewrite stays rejected |
 | **Re-running the Article-2 channel mix** | Both converting pools (Kotlin/KMP, Claude Code) were touched once each and returned +10 total. HN and LinkedIn returned +0 between them. Reddit is gated. dev.to and Hashnode were cut on measured data |

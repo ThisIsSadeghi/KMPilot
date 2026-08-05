@@ -11,6 +11,58 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+### Fixed
+
+- **[Tooling]** **Adopting a repo with two plausible app modules no longer picks one
+  silently.** App-module detection returned the first module matching a signal and called
+  it certain, so a project where both `shared` and `mobile` bootstrap Koin got whichever
+  sorted first — and the package prefix, the core dependencies and the Koin glue all
+  followed that answer. Detection now collects every match in the winning signal tier: one
+  match is used as before, more than one names them all and asks, and a non-interactive run
+  refuses with the candidates and the `--app-module=` flag rather than guessing. The
+  confirmation also moved ahead of package-prefix detection, which previously read the
+  prefix off the module the user was about to reject.
+
+- **[Tooling]** **An inferred package prefix is now cross-checked before it is used.** The
+  prefix is the longest package shared by the app module's sources, which nothing confirmed
+  — so an app module whose sources all sit under one sub-package yielded `com.acme.app.ui`,
+  a perfectly well-formed package and completely wrong, and every vendored core module was
+  renamed into it. Adoption now compares the inferred prefix against the `namespace` and
+  `applicationId` your Android build declares, and when they disagree it shows both and
+  offers the declared one. Consistent detections stay silent, and an explicitly passed
+  prefix is never second-guessed.
+
+- **[Tooling]** **A KMPilot that arrived without a manifest is now recognised and reported.**
+  `.kmpilot.json` was the only signal that a repo already had KMPilot, so a hand-vendored
+  install from before adopt mode existed — a `kmpilotLibs` catalog, namespaced `core/*`
+  modules — was invisible, and adopting again wrote a second copy over the top. Detection no
+  longer depends on the manifest: every artefact found is listed in one inventory before
+  anything is written, and adopting over it takes `--force`. That flag now actually works in
+  this case — it was gated on the manifest, so the previous message told you to pass
+  `--force` and refused again when you did.
+
+- **[Tooling]** **Running `--adopt` from a monorepo root now names the directory to run in.**
+  `--adopt` installs into the Gradle project it is invoked from, so a repo with `android/`,
+  `ios/` and `backend/` got either "No settings.gradle.kts here" or — when the top happened
+  to be a Gradle root of its own — "this does not look like a Kotlin Multiplatform project"
+  and a pointer to `migrate-feature`, about a repo that plainly contains one. Both refusals
+  now look one level down first and name the KMP build they find. A sibling Gradle root that
+  is not KMP is never suggested; pointing someone at the wrong directory is worse than
+  pointing at none.
+
+- **[Tooling]** **The adopt matrix covers three more project shapes** — two modules that both
+  look like the app shell, an app module with nothing at its root package, and a
+  `rootProject.name` with nothing in common with the package prefix. The last one is
+  regression cover rather than a fix: the generated-resources package and the Kotlin package
+  are independent inputs to the same rename pass, and every fixture so far had the two
+  sharing a token, so a rename that conflated them would have looked correct.
+
+### Added
+
+- **[Tooling]** `KMPILOT_NONINTERACTIVE=1` makes `install.sh` never prompt, even with a
+  terminal attached — anything it would ask becomes a refusal. Capturing stdout was not
+  enough to make a run non-interactive, so scripted adoptions could block on a prompt.
+
 ### Changed
 
 - **[Tooling]** **Feature writes are blocked in an uninitialized project.** The

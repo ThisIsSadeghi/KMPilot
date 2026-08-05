@@ -47,6 +47,10 @@ Everything lands as one reviewable `git diff`.
 | `--force` | Re-run over an existing adoption (idempotent) |
 | `--app-module=<module>` | Name the app module explicitly instead of letting detection ask |
 
+| Env var | Effect |
+|---|---|
+| `KMPILOT_NONINTERACTIVE=1` | Never prompt, even from a terminal. Anything that would be asked becomes a refusal |
+
 ## Will it work on my repo?
 
 Every row below is a variant in [`scripts/adopt-matrix.sh`](scripts/adopt-matrix.sh), asserted
@@ -58,12 +62,14 @@ on each change — so this table cannot drift from the behaviour.
 |---|---|
 | Any module naming | The app module is detected, not assumed — `composeApp`, `shared`, `app`, anything |
 | Any package depth | Prefix is the longest package shared by your app module's sources |
+| Nothing at the app module's root package | All sources under `…app.ui` / `…app.di` / `…app.nav` still resolve to `…app` |
 | Convention plugins (`buildSrc` / `build-logic` / included builds) | The KMP plugin is found there too, and a module with `src/commonMain` counts as proof on its own |
 | Koin started any way you like | `startKoin`, or Compose's `KoinApplication` / `koinConfiguration` — all recognised |
 | No `NavHost` (Voyager, Decompose, hoisted state) | Valid navigation; `archTest` warns rather than failing |
 | No version catalog | KMPilot writes its own `kmpilot.versions.toml`; nothing of yours is required |
 | `iosX64` in your targets | Added to the vendored modules automatically — it folds into the same `iosMain` |
 | Hyphenated `rootProject.name` | Sanitized the way Compose sanitizes it (`acme-notes` → `acme_notes`) |
+| A `rootProject.name` unrelated to your package | Independent values: the resources package follows the root name, the Kotlin package follows your sources |
 
 **Adopts, with a warning you should read**
 
@@ -73,17 +79,21 @@ on each change — so this table cannot drift from the behaviour.
 | Arrow (`arrow.core.Either`) | You'll have two distinct types named `Either`; any file importing both must alias one |
 | Your own design system | KMPilot's `X*` components are vendored alongside yours; the rules only enforce KMPilot's |
 | Kotlin / AGP / Compose below KMPilot's tested floor | Your versions are kept regardless — never overridden — but core may not compile |
+| A package prefix unrelated to your Android `namespace` / `applicationId` | Both are shown and you're offered the declared one. The prefix is inferred from your sources; your Android build states it outright, so a disagreement is worth a look |
 
 **Refused, with the reason**
 
 | Your project | Why |
 |---|---|
+| Two modules that both look like the app shell | Both named, and you're asked which. Everything adoption writes hangs off that answer, so it is never guessed — pass `--app-module=` on a non-interactive run |
+| Run from a monorepo root, with the KMP build one level down | Refused **naming the directory to `cd` into**. A sibling Gradle root that isn't KMP (a `backend/`) is never suggested |
 | Not Kotlin Multiplatform | Adopt mode installs a KMP pipeline. Android→KMP is a different job (`migrate-feature`, upstream) |
 | Targets we can't serve (`wasmJs`, `js`, `macos*`, `watchos*`, `linux*`) | Vendored core ships `androidMain` / `iosMain` / `desktopMain` actuals only — adopting would leave that target without a variant |
 | Groovy DSL (`settings.gradle`) | Not supported **yet** — tractable, unscheduled. [Open an issue](https://github.com/ThisIsSadeghi/KMPilot/issues) if you want it; that's what decides |
 | You already own a module at `core/common`, `core/data` or `core/designsystem` | The names collide. Yours is never overwritten, but features could not resolve `Either`/`UiState` — so adoption stops instead |
 | Dirty working tree | Adoption should land as one reviewable diff |
 | Already adopted | Re-run with `--force` |
+| KMPilot already vendored by hand, with no `.kmpilot.json` | Every artefact found is listed in one inventory — core modules, the `kmpilotLibs` catalog, the checker. Re-run with `--force` to adopt over it, or remove them and adopt clean |
 
 A refusal is never a broken edit — adopt mode stops before writing anything. If it refuses a
 repo it shouldn't, that's a bug worth reporting: paste the message into an issue.
