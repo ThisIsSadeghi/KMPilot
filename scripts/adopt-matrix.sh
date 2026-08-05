@@ -272,6 +272,33 @@ post_single_subpackage() {
     return 0
 }
 
+# Nothing at the app module's ROOT package: every file sits one level down
+# (…notes.ui, …notes.di, …notes.data, …notes.notes) and no .kt declares
+# `package com.acme.notes` itself. The longest-common-prefix walk still resolves
+# — and nothing confirms it. This is the code path that once emitted
+# `com.example.bookshelf.` with a newline glued on.
+#
+# Every source set, not just commonMain: the walk greps the module's whole src/
+# tree, so one leftover root-package file in iosMain is enough to make the shape
+# under test not the shape being tested.
+mut_subpackages_only() {
+    local f dir
+    while IFS= read -r f; do
+        dir="$(dirname "$f")/ui"
+        mkdir -p "$dir"
+        sedi 's|^package com\.acme\.notes$|package com.acme.notes.ui|' "$f"
+        mv "$f" "$dir/"
+    done < <(grep -rl '^package com\.acme\.notes$' "$1/shared/src" 2>/dev/null)
+}
+
+# Exactly the shared prefix — not `com.acme.notes.ui` (the walk swallowing a
+# sub-package) and not `com.acme.notes.` with a stray segment appended.
+post_subpackages_only() {
+    grep -q '"packagePrefix": "com.acme.notes"' "$1/.kmpilot.json" \
+        || { echo "wrong packagePrefix: $(grep packagePrefix "$1/.kmpilot.json")"; return 1; }
+    return 0
+}
+
 # Two modules both bootstrapping Koin. Detection used to return the FIRST match
 # in the winning signal tier — `mobile` here, purely because it sorts before
 # `shared` — and label it `strong`, so the second candidate was never seen. Every
@@ -342,6 +369,7 @@ VARIANTS=(
   "dirty-tree|mut_dirty_tree|refuses|not clean|"
   "already-adopted|mut_already_adopted|refuses|--force|--dry-run"
   "two-app-modules|mut_two_app_modules|refuses|--app-module=mobile|"
+  "subpackages-only|mut_subpackages_only|applies|core/common|"
 )
 
 run_variant() {

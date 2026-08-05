@@ -624,6 +624,62 @@ detect_pkg_prefix() {
     printf '%s' "$lcp"
 }
 
+# Package identities the target's Android build DECLARES — every `namespace` and
+# `applicationId` in its build files. The prefix above is inferred by walking
+# source files; these are stated outright, which makes them the one independent
+# check available on that inference.
+android_pkg_identities() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(adopt_build_files)
+    [[ ${#files[@]} -gt 0 ]] || return 0
+    grep -hosE '(namespace|applicationId)[[:space:]]*=[[:space:]]*"[a-z][A-Za-z0-9_.]*"' \
+        "${files[@]}" 2>/dev/null \
+        | sed 's/.*"\(.*\)"/\1/' | sort -u
+    return 0
+}
+
+# Cross-check the inferred prefix against those declared identities, and confirm
+# when they disagree. Consistent means the prefix IS one of them, or one of them
+# extends it (`com.acme.notes` beside a `com.acme.notes.android` namespace is the
+# ordinary shape, and stays silent).
+#
+# The disagreement worth catching is the walk swallowing a sub-package: an app
+# module whose sources all sit under `…notes.ui` yields `com.acme.notes.ui`, which
+# is a perfectly well-formed package and completely wrong — every vendored core
+# module would be renamed into a UI sub-package. Nothing else notices, because
+# there is nothing else to compare against.
+#
+# A warning plus a default, never a refusal: this is a soft signal, and a repo
+# that genuinely has no Android module has no identities to check at all.
+confirm_pkg_prefix() {
+    local ids id shortest=""
+    ids="$(android_pkg_identities)"
+    [[ -n "$ids" ]] || return 0
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        [[ "$id" == "$PKG_PREFIX" || "$id" == "$PKG_PREFIX."* ]] && return 0
+        [[ -z "$shortest" || ${#id} -lt ${#shortest} ]] && shortest="$id"
+    done <<< "$ids"
+
+    warn "Package prefix '${BOLD}${PKG_PREFIX}${RESET}' does not match what your Android build declares:"
+    substep "namespace / applicationId: $(printf '%s' "$ids" | tr '\n' ' ' | sed 's/ *$//')"
+    substep "the prefix was read from the packages in ${APP_MODULE}/src; the vendored core"
+    substep "modules are renamed into it, so a sub-package here follows them everywhere."
+    if [[ -n "$TTY" && -n "$shortest" ]] && valid_pkg "$shortest"; then
+        local ans
+        printf '    %s?%s %sPackage prefix%s %s[%s]%s: ' \
+            "$CYAN" "$RESET" "$BOLD" "$RESET" "$DIM" "$shortest" "$RESET" > /dev/tty
+        read -r ans < "$TTY" || die "Aborted."
+        ans="${ans:-$shortest}"
+        valid_pkg "$ans" || die "'$ans' is not a dotted lowercase package."
+        PKG_PREFIX="$ans"
+    else
+        substep "keeping '${PKG_PREFIX}' — pass it explicitly to override:"
+        substep "    install.sh --adopt ${ROOT_NAME} ${shortest:-com.acme.myapp}"
+    fi
+    return 0
+}
+
 adopt_detect() {
     step "Inspecting this repository"
 
@@ -784,6 +840,10 @@ Name it explicitly, or re-run where a terminal can ask you:
         else
             die "Pass one explicitly:  install.sh --adopt <Name> <package.prefix>"
         fi
+    elif [[ -z "$PKG_ARG" ]]; then
+        # Only an INFERRED prefix gets cross-checked. An explicit argument is the
+        # user's own statement of intent and is never second-guessed.
+        confirm_pkg_prefix
     fi
 
     # Two independent signals, either is sufficient. The structural one (a module

@@ -62,6 +62,7 @@ on each change — so this table cannot drift from the behaviour.
 |---|---|
 | Any module naming | The app module is detected, not assumed — `composeApp`, `shared`, `app`, anything |
 | Any package depth | Prefix is the longest package shared by your app module's sources |
+| Nothing at the app module's root package | All sources under `…app.ui` / `…app.di` / `…app.nav` still resolve to `…app` |
 | Convention plugins (`buildSrc` / `build-logic` / included builds) | The KMP plugin is found there too, and a module with `src/commonMain` counts as proof on its own |
 | Koin started any way you like | `startKoin`, or Compose's `KoinApplication` / `koinConfiguration` — all recognised |
 | No `NavHost` (Voyager, Decompose, hoisted state) | Valid navigation; `archTest` warns rather than failing |
@@ -77,6 +78,7 @@ on each change — so this table cannot drift from the behaviour.
 | Arrow (`arrow.core.Either`) | You'll have two distinct types named `Either`; any file importing both must alias one |
 | Your own design system | KMPilot's `X*` components are vendored alongside yours; the rules only enforce KMPilot's |
 | Kotlin / AGP / Compose below KMPilot's tested floor | Your versions are kept regardless — never overridden — but core may not compile |
+| A package prefix unrelated to your Android `namespace` / `applicationId` | Both are shown and you're offered the declared one. The prefix is inferred from your sources; your Android build states it outright, so a disagreement is worth a look |
 
 **Refused, with the reason**
 

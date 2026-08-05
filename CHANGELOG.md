@@ -23,6 +23,15 @@ may conflict), or **[Breaking]** (manual steps required).
   confirmation also moved ahead of package-prefix detection, which previously read the
   prefix off the module the user was about to reject.
 
+- **[Tooling]** **An inferred package prefix is now cross-checked before it is used.** The
+  prefix is the longest package shared by the app module's sources, which nothing confirmed
+  — so an app module whose sources all sit under one sub-package yielded `com.acme.app.ui`,
+  a perfectly well-formed package and completely wrong, and every vendored core module was
+  renamed into it. Adoption now compares the inferred prefix against the `namespace` and
+  `applicationId` your Android build declares, and when they disagree it shows both and
+  offers the declared one. Consistent detections stay silent, and an explicitly passed
+  prefix is never second-guessed.
+
 ### Added
 
 - **[Tooling]** `KMPILOT_NONINTERACTIVE=1` makes `install.sh` never prompt, even with a
