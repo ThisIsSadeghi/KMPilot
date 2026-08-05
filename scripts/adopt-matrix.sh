@@ -299,6 +299,35 @@ post_subpackages_only() {
     return 0
 }
 
+# A rootProject.name with NOTHING in common with the package prefix. The two are
+# independent inputs to the rename and both are rewritten in the same pass: the
+# generated-resources package comes from rootProject.name lowercased and
+# sanitized, the Kotlin package from the app module's sources. A rename that
+# conflated them would still look right whenever the two happen to share a token
+# — which, in the baseline fixture and in the template, they do.
+#
+# The hyphen is deliberate: Compose Multiplatform sanitizes `paper-trail` to
+# `paper_trail` for the resources package and rename.sh has to mirror that
+# exactly, or every rewritten import names a package the plugin never generates.
+mut_unrelated_root_name() {
+    sedi 's|rootProject.name = "AcmeNotes"|rootProject.name = "Paper-Trail"|' \
+        "$1/settings.gradle.kts"
+}
+
+post_unrelated_root_name() {
+    local ds="$1/core/designsystem/src"
+    grep -rqs 'paper_trail\.core\.designsystem\.generated\.resources' "$ds" \
+        || { echo "resources package not derived from rootProject.name (expected paper_trail.core.designsystem.generated.resources)"; return 1; }
+    grep -rqs '^package com\.acme\.notes\.designsystem' "$ds" \
+        || { echo "Kotlin package not derived from the app module's sources (expected com.acme.notes.designsystem)"; return 1; }
+    # Neither input may leak the template's own values into the other's slot.
+    grep -rqs 'kmpilot\.core\.[a-z]*\.generated\.resources' "$1/core" \
+        && { echo "left an un-renamed kmpilot.core.* resources import behind"; return 1; }
+    grep -rqs '^package thisissadeghi\.' "$1/core" \
+        && { echo "left an un-renamed thisissadeghi.* package behind"; return 1; }
+    return 0
+}
+
 # Two modules both bootstrapping Koin. Detection used to return the FIRST match
 # in the winning signal tier — `mobile` here, purely because it sorts before
 # `shared` — and label it `strong`, so the second candidate was never seen. Every
@@ -370,6 +399,7 @@ VARIANTS=(
   "already-adopted|mut_already_adopted|refuses|--force|--dry-run"
   "two-app-modules|mut_two_app_modules|refuses|--app-module=mobile|"
   "subpackages-only|mut_subpackages_only|applies|core/common|"
+  "unrelated-root-name|mut_unrelated_root_name|applies|core/designsystem|"
 )
 
 run_variant() {

@@ -69,6 +69,7 @@ on each change — so this table cannot drift from the behaviour.
 | No version catalog | KMPilot writes its own `kmpilot.versions.toml`; nothing of yours is required |
 | `iosX64` in your targets | Added to the vendored modules automatically — it folds into the same `iosMain` |
 | Hyphenated `rootProject.name` | Sanitized the way Compose sanitizes it (`acme-notes` → `acme_notes`) |
+| A `rootProject.name` unrelated to your package | Independent values: the resources package follows the root name, the Kotlin package follows your sources |
 
 **Adopts, with a warning you should read**
 

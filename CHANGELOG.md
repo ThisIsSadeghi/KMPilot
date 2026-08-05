@@ -32,6 +32,13 @@ may conflict), or **[Breaking]** (manual steps required).
   offers the declared one. Consistent detections stay silent, and an explicitly passed
   prefix is never second-guessed.
 
+- **[Tooling]** **The adopt matrix covers three more project shapes** — two modules that both
+  look like the app shell, an app module with nothing at its root package, and a
+  `rootProject.name` with nothing in common with the package prefix. The last one is
+  regression cover rather than a fix: the generated-resources package and the Kotlin package
+  are independent inputs to the same rename pass, and every fixture so far had the two
+  sharing a token, so a rename that conflated them would have looked correct.
+
 ### Added
 
 - **[Tooling]** `KMPILOT_NONINTERACTIVE=1` makes `install.sh` never prompt, even with a
