@@ -299,6 +299,36 @@ post_subpackages_only() {
     return 0
 }
 
+# A monorepo: git root on top, the KMP build in android/, a non-KMP Gradle root
+# in backend/, and an ios/ that is neither. Running --adopt from the top is an
+# ordinary mistake in a company codebase, and the refusal it used to get was
+# either "No settings.gradle.kts here" or — worse, when the top happens to be a
+# Gradle root of its own — "this does not look like a Kotlin Multiplatform
+# project", about a repo that plainly contains one.
+mut_monorepo() {
+    local f base
+    mkdir -p "$1/android"
+    for f in "$1"/* "$1"/.[!.]*; do
+        [[ -e "$f" ]] || continue
+        base="$(basename "$f")"
+        case "$base" in android|.git) continue ;; esac
+        mv "$f" "$1/android/"
+    done
+    mkdir -p "$1/ios"
+    : > "$1/ios/Podfile"
+    mkdir -p "$1/backend/src/main/kotlin"
+    printf 'plugins { id("java") }\n' > "$1/backend/build.gradle.kts"
+    printf 'rootProject.name = "backend"\n' > "$1/backend/settings.gradle.kts"
+}
+
+# backend/ is a Gradle root too, and is NOT KMP. Naming it would send the reader
+# to the wrong directory, which is worse than not pointing anywhere.
+post_monorepo() {
+    printf '%s' "$2" | grep -q 'backend' \
+        && { echo "named backend/ — a Gradle root that is not Kotlin Multiplatform"; return 1; }
+    return 0
+}
+
 # A rootProject.name with NOTHING in common with the package prefix. The two are
 # independent inputs to the rename and both are rewritten in the same pass: the
 # generated-resources package comes from rootProject.name lowercased and
@@ -400,6 +430,7 @@ VARIANTS=(
   "two-app-modules|mut_two_app_modules|refuses|--app-module=mobile|"
   "subpackages-only|mut_subpackages_only|applies|core/common|"
   "unrelated-root-name|mut_unrelated_root_name|applies|core/designsystem|"
+  "monorepo|mut_monorepo|refuses|cd android|--dry-run"
 )
 
 run_variant() {
@@ -458,12 +489,14 @@ run_variant() {
         ok=no; reason="missing expected text: $pattern"
     fi
 
-    # Optional per-variant assertion on what landed on disk — available to every
-    # outcome, not just `applies`: "it refused AND wrote nothing" is exactly the
-    # kind of claim worth checking against the filesystem rather than the log.
+    # Optional per-variant assertion, called as post_<name> <fixture-dir> <output>.
+    # Available to every outcome, not just `applies`: "it refused AND wrote
+    # nothing" is exactly the kind of claim worth checking against the filesystem
+    # rather than the log. The output is passed too because the single `pattern`
+    # column can assert that a string IS present but never that one is ABSENT.
     local fn="post_${name//-/_}" detail
     if [[ "$ok" == "yes" ]] && declare -F "$fn" >/dev/null; then
-        if ! detail="$("$fn" "$dir")"; then
+        if ! detail="$("$fn" "$dir" "$out")"; then
             ok=no; reason="${detail:-post-check failed}"
         fi
     fi

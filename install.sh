@@ -680,10 +680,58 @@ confirm_pkg_prefix() {
     return 0
 }
 
+# Does a directory contain a Kotlin Multiplatform build? Deliberately shallow —
+# this only ever runs to improve a refusal, so a `commonMain` source set or a
+# build file naming the KMP plugin is enough. The depth covers `<root>/<module>/
+# src/commonMain` and one extra level for `<root>/core/<module>/src/commonMain`.
+looks_kmp_at() {  # <dir>
+    find "$1" -maxdepth 5 -type d -name commonMain -not -path '*/build/*' 2>/dev/null \
+        | grep -q . && return 0
+    grep -rqsE 'org\.jetbrains\.kotlin\.multiplatform|kotlin\("multiplatform"\)|kotlinMultiplatform' \
+        --include='*.gradle.kts' "$1" 2>/dev/null
+}
+
+# Kotlin Multiplatform builds sitting ONE level below here. `--adopt` installs
+# into the Gradle project it is run from, and a monorepo with android/, ios/ and
+# backend/ keeps that project in a subdirectory — so "you ran this a level too
+# high" and "this is not a KMP repo" are the same message today, and only one of
+# the two is something the reader can act on.
+#
+# A sibling Gradle root that is not KMP (a `backend/`) is deliberately not named:
+# pointing someone at the wrong directory is worse than not pointing at all.
+nested_kmp_roots() {
+    local d
+    for d in */; do
+        d="${d%/}"
+        case "$d" in .*|build|buildSrc|build-logic|gradle|node_modules) continue ;; esac
+        [[ -f "$d/settings.gradle.kts" || -f "$d/settings.gradle" ]] || continue
+        looks_kmp_at "$d" && printf '%s\n' "$d"
+    done
+    return 0
+}
+
+# Refuse naming the directory to run in, when there is one to name.
+die_wrong_level() {  # <first line of the refusal>
+    local nested
+    nested="$(nested_kmp_roots)"
+    [[ -n "$nested" ]] || return 0
+    die "$1
+
+A Kotlin Multiplatform build does live one level down:
+
+$(printf '%s\n' "$nested" | sed 's|^|    |')
+
+--adopt installs into the Gradle project it is run from, never into a parent of
+one. Change into that directory and re-run the same command:
+
+    cd $(printf '%s\n' "$nested" | head -n1)"
+}
+
 adopt_detect() {
     step "Inspecting this repository"
 
     if [[ ! -f settings.gradle.kts ]]; then
+        die_wrong_level "No settings.gradle.kts here — this directory is not a Gradle project root."
         if [[ -f settings.gradle ]]; then
             die "This project uses the Groovy DSL (settings.gradle), which adopt mode does not support yet.
 
@@ -752,6 +800,13 @@ Re-run with --force to re-apply. Re-applying is idempotent: it never duplicates 
         detected="$(detect_app_module)"
         IFS='|' read -r APP_MODULE APP_MODULE_CONFIDENCE APP_MODULE_CANDIDATES \
             <<< "$detected"
+    fi
+    # Before calling it a non-KMP repo, check whether the KMP build is simply one
+    # level down — a Gradle root that includes only backend modules is a monorepo
+    # top, not an Android-only app, and telling its owner to go use
+    # 'migrate-feature' is the wrong answer to a fixable mistake.
+    if [[ -z "$APP_MODULE" ]]; then
+        die_wrong_level "No module in settings.gradle.kts has a src/commonMain source set."
     fi
     [[ -n "$APP_MODULE" ]] || die "This does not look like a Kotlin Multiplatform project.
 No module in settings.gradle.kts has a src/commonMain source set.

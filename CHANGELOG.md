@@ -32,6 +32,15 @@ may conflict), or **[Breaking]** (manual steps required).
   offers the declared one. Consistent detections stay silent, and an explicitly passed
   prefix is never second-guessed.
 
+- **[Tooling]** **Running `--adopt` from a monorepo root now names the directory to run in.**
+  `--adopt` installs into the Gradle project it is invoked from, so a repo with `android/`,
+  `ios/` and `backend/` got either "No settings.gradle.kts here" or — when the top happened
+  to be a Gradle root of its own — "this does not look like a Kotlin Multiplatform project"
+  and a pointer to `migrate-feature`, about a repo that plainly contains one. Both refusals
+  now look one level down first and name the KMP build they find. A sibling Gradle root that
+  is not KMP is never suggested; pointing someone at the wrong directory is worse than
+  pointing at none.
+
 - **[Tooling]** **The adopt matrix covers three more project shapes** — two modules that both
   look like the app shell, an app module with nothing at its root package, and a
   `rootProject.name` with nothing in common with the package prefix. The last one is

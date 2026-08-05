@@ -86,6 +86,7 @@ on each change — so this table cannot drift from the behaviour.
 | Your project | Why |
 |---|---|
 | Two modules that both look like the app shell | Both named, and you're asked which. Everything adoption writes hangs off that answer, so it is never guessed — pass `--app-module=` on a non-interactive run |
+| Run from a monorepo root, with the KMP build one level down | Refused **naming the directory to `cd` into**. A sibling Gradle root that isn't KMP (a `backend/`) is never suggested |
 | Not Kotlin Multiplatform | Adopt mode installs a KMP pipeline. Android→KMP is a different job (`migrate-feature`, upstream) |
 | Targets we can't serve (`wasmJs`, `js`, `macos*`, `watchos*`, `linux*`) | Vendored core ships `androidMain` / `iosMain` / `desktopMain` actuals only — adopting would leave that target without a variant |
 | Groovy DSL (`settings.gradle`) | Not supported **yet** — tractable, unscheduled. [Open an issue](https://github.com/ThisIsSadeghi/KMPilot/issues) if you want it; that's what decides |
