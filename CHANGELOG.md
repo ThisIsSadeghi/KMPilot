@@ -32,6 +32,15 @@ may conflict), or **[Breaking]** (manual steps required).
   offers the declared one. Consistent detections stay silent, and an explicitly passed
   prefix is never second-guessed.
 
+- **[Tooling]** **A KMPilot that arrived without a manifest is now recognised and reported.**
+  `.kmpilot.json` was the only signal that a repo already had KMPilot, so a hand-vendored
+  install from before adopt mode existed — a `kmpilotLibs` catalog, namespaced `core/*`
+  modules — was invisible, and adopting again wrote a second copy over the top. Detection no
+  longer depends on the manifest: every artefact found is listed in one inventory before
+  anything is written, and adopting over it takes `--force`. That flag now actually works in
+  this case — it was gated on the manifest, so the previous message told you to pass
+  `--force` and refused again when you did.
+
 - **[Tooling]** **Running `--adopt` from a monorepo root now names the directory to run in.**
   `--adopt` installs into the Gradle project it is invoked from, so a repo with `android/`,
   `ios/` and `backend/` got either "No settings.gradle.kts here" or — when the top happened

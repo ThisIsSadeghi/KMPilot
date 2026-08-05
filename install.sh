@@ -955,17 +955,43 @@ Bringing an Android-only app to KMP is a different job — see 'migrate-feature'
         for m in "${ADOPT_CORE[@]}"; do
             is_real_module "core/$m" && ! is_kmpilot_core "$m" && theirs="${theirs} core/$m"
         done
-        if [[ -n "$clash" && -z "$theirs" ]]; then
-            die "Found KMPilot's own core modules at:${clash}
+        # Everything KMPilot has already put here, reported as one inventory
+        # before anything is written. Core modules are only one of the ways a
+        # KMPilot can arrive without a manifest — a hand-vendored install from
+        # before adopt mode existed leaves a kmpilotLibs catalog and namespaced
+        # modules instead, and adopting over either would write a second copy of
+        # what is already there. Re-adopting on top of a vendoring of unknown
+        # vintage is not something to do by accident, so it takes --force.
+        #
+        # Gated on --force as well as on the manifest. WAS_ADOPTED reads
+        # .kmpilot.json, which is precisely what is absent in this shape, so
+        # without the FORCE test the refusal would tell the reader to pass
+        # --force and then refuse again when they did.
+        local artefacts
+        artefacts="$(kmpilot_artefacts)"
+        if [[ -n "$artefacts" && -z "$theirs" && "$FORCE" != "yes" ]]; then
+            die "This project already carries KMPilot, but has no .kmpilot.json:
 
-but no .kmpilot.json — so a previous adoption was removed without deleting them.
-Nothing here is yours to lose. Either finish the removal, or re-run with --force to
-reuse them as they are:
+$(printf '%s\n' "$artefacts" | sed 's|^|    |')
 
-    rm -rf${clash}                 # then adopt normally
-    …--adopt --force               # or keep them and re-wire around them"
+That is either a hand-vendored install from before adopt mode existed, or an
+adoption whose manifest was deleted. Nothing here is yours to lose, and nothing
+has been written.
+
+Re-run with --force to adopt over it — re-applying is idempotent and never
+duplicates a Gradle line:
+
+    …--adopt --force
+${clash:+
+Or finish removing what is there and adopt clean:
+
+    rm -rf${clash}
+}"
         fi
-        if [[ -n "$clash" ]]; then
+        # A real name collision, and --force does not make their core/common
+        # ours — keyed on `theirs` rather than `clash`, because a forced run past
+        # the inventory above leaves `clash` set to KMPilot's own modules.
+        if [[ -n "$theirs" ]]; then
             die "This project already has a module at:${theirs}
 
 KMPilot vendors its own modules at exactly those paths, so the names collide. It will not
@@ -1296,6 +1322,34 @@ is_kmpilot_core() {  # <module name>
         designsystem) find "core/designsystem/src" -name 'XScreen.kt' 2>/dev/null | grep -q . ;;
         *)            return 1 ;;
     esac
+}
+
+# KMPilot artefacts present in a repo with NO .kmpilot.json — a hand-vendored
+# install from before adopt mode existed, or an adoption whose manifest was
+# deleted. The manifest is the normal signal and is exactly what is missing here,
+# so every one of these is detected independently of it.
+kmpilot_artefacts() {
+    local m d
+    for m in "${ADOPT_CORE[@]}"; do
+        is_real_module "core/$m" && is_kmpilot_core "$m" \
+            && printf 'core/%s — a KMPilot core module\n' "$m"
+    done
+    # Someone who hand-vendored before adopt mode existed had no reason to use
+    # KMPilot's own paths, and every reason to namespace them out of the way.
+    for d in core/kmpilot*; do
+        [[ -d "$d" ]] && printf '%s — a KMPilot-named module\n' "$d"
+    done
+    [[ -f gradle/kmpilot.versions.toml ]] \
+        && printf 'gradle/kmpilot.versions.toml — the kmpilotLibs catalog\n'
+    grep -qs 'kmpilotLibs' settings.gradle.kts \
+        && printf 'settings.gradle.kts — already registers kmpilotLibs\n'
+    [[ -f .claude/skills/_shared/kmpilot_check.py ]] \
+        && printf '.claude/skills/_shared/kmpilot_check.py — the architecture checker\n'
+    [[ -f KMPILOT-NEXT-STEPS.md ]] \
+        && printf 'KMPILOT-NEXT-STEPS.md — written by a previous adoption\n'
+    # Finding nothing is the normal answer; without this the last failed test
+    # becomes the exit status and `set -e` aborts the run.
+    return 0
 }
 
 adopt_vendor_core() {

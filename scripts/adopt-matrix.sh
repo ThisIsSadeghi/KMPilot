@@ -299,6 +299,41 @@ post_subpackages_only() {
     return 0
 }
 
+# Someone who hand-vendored KMPilot before adopt mode existed: a kmpilotLibs
+# catalog, its registration in settings, and core modules namespaced out of the
+# way — and no .kmpilot.json, because there was nothing to write one. Adopting
+# again would lay a second copy over the top. The `already-adopted` variant
+# covers the same shape WITH a manifest; this is the one without.
+mut_pre_vendored() {
+    printf '[versions]\nkmpilot = "0.1.0"\n' > "$1/gradle/kmpilot.versions.toml"
+    cat >> "$1/settings.gradle.kts" <<'EOF'
+
+dependencyResolutionManagement {
+    versionCatalogs {
+        create("kmpilotLibs") { from(files("gradle/kmpilot.versions.toml")) }
+    }
+}
+EOF
+    mkdir -p "$1/core/kmpilotcommon/src/commonMain/kotlin"
+    printf 'plugins { alias(libs.plugins.kotlinMultiplatform) }\n' \
+        > "$1/core/kmpilotcommon/build.gradle.kts"
+    printf 'include(":core:kmpilotcommon")\n' >> "$1/settings.gradle.kts"
+}
+
+# Every artefact named in one inventory, and nothing written. A refusal that
+# mentions only the first thing it found sends the reader round the loop again.
+post_pre_vendored() {
+    local a
+    for a in 'gradle/kmpilot.versions.toml' 'already registers kmpilotLibs' 'core/kmpilotcommon'; do
+        printf '%s' "$2" | grep -qF "$a" \
+            || { echo "refusal did not name: $a"; return 1; }
+    done
+    printf '%s' "$(git -C "$1" status --porcelain)" | grep -q . \
+        && { echo "refused but left the tree dirty — something was written"; return 1; }
+    [[ ! -f "$1/.kmpilot.json" ]] || { echo "refused but wrote .kmpilot.json"; return 1; }
+    return 0
+}
+
 # A monorepo: git root on top, the KMP build in android/, a non-KMP Gradle root
 # in backend/, and an ios/ that is neither. Running --adopt from the top is an
 # ordinary mistake in a company codebase, and the refusal it used to get was
@@ -431,6 +466,7 @@ VARIANTS=(
   "subpackages-only|mut_subpackages_only|applies|core/common|"
   "unrelated-root-name|mut_unrelated_root_name|applies|core/designsystem|"
   "monorepo|mut_monorepo|refuses|cd android|--dry-run"
+  "pre-vendored|mut_pre_vendored|refuses|already carries KMPilot, but has no .kmpilot.json|"
 )
 
 run_variant() {

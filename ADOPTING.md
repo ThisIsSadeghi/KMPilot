@@ -93,6 +93,7 @@ on each change — so this table cannot drift from the behaviour.
 | You already own a module at `core/common`, `core/data` or `core/designsystem` | The names collide. Yours is never overwritten, but features could not resolve `Either`/`UiState` — so adoption stops instead |
 | Dirty working tree | Adoption should land as one reviewable diff |
 | Already adopted | Re-run with `--force` |
+| KMPilot already vendored by hand, with no `.kmpilot.json` | Every artefact found is listed in one inventory — core modules, the `kmpilotLibs` catalog, the checker. Re-run with `--force` to adopt over it, or remove them and adopt clean |
 
 A refusal is never a broken edit — adopt mode stops before writing anything. If it refuses a
 repo it shouldn't, that's a bug worth reporting: paste the message into an issue.
