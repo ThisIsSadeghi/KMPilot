@@ -272,6 +272,38 @@ post_single_subpackage() {
     return 0
 }
 
+# Two modules both bootstrapping Koin. Detection used to return the FIRST match
+# in the winning signal tier — `mobile` here, purely because it sorts before
+# `shared` — and label it `strong`, so the second candidate was never seen. Every
+# downstream value (package prefix, which build file gets the core dependencies,
+# where the Koin glue lands) then came off a module that is not the app shell.
+mut_two_app_modules() {
+    mkdir -p "$1/mobile/src/commonMain/kotlin/com/acme/notes/mobile"
+    cat > "$1/mobile/build.gradle.kts" <<'EOF'
+plugins { alias(libs.plugins.kotlinMultiplatform) }
+EOF
+    cat > "$1/mobile/src/commonMain/kotlin/com/acme/notes/mobile/Bootstrap.kt" <<'EOF'
+package com.acme.notes.mobile
+
+import org.koin.core.context.startKoin
+
+fun bootstrap() {
+    startKoin { }
+}
+EOF
+    printf 'include(":mobile")\n' >> "$1/settings.gradle.kts"
+}
+
+# Runs WITHOUT --dry-run on purpose: the claim under test is that a real run
+# refuses during detection, before anything is staged or written.
+post_two_app_modules() {
+    printf '%s' "$(git -C "$1" status --porcelain)" | grep -q . \
+        && { echo "refused but left the tree dirty — something was written"; return 1; }
+    [[ ! -f "$1/.kmpilot.json" ]] || { echo "refused but wrote .kmpilot.json"; return 1; }
+    [[ ! -d "$1/core" ]] || { echo "refused but vendored core/"; return 1; }
+    return 0
+}
+
 mut_dirty_tree() {
     printf '\n// uncommitted\n' >> "$1/app/build.gradle.kts"
 }
@@ -309,6 +341,7 @@ VARIANTS=(
   "core-name-clash|mut_core_name_clash|refuses|names collide|--dry-run"
   "dirty-tree|mut_dirty_tree|refuses|not clean|"
   "already-adopted|mut_already_adopted|refuses|--force|--dry-run"
+  "two-app-modules|mut_two_app_modules|refuses|--app-module=mobile|"
 )
 
 run_variant() {
@@ -326,7 +359,12 @@ run_variant() {
         git -C "$dir" -c user.email=f@l -c user.name=f commit --quiet -m "variant: $name" >/dev/null 2>&1
     fi
 
-    out="$(cd "$dir" && NO_COLOR=1 KMPILOT_ASSUME_YES=1 KMPILOT_SOURCE_DIR="$KMPILOT_ROOT" \
+    # KMPILOT_NONINTERACTIVE: capturing stdout does not make a run non-interactive
+    # — launched from a terminal, install.sh can still open /dev/tty and would
+    # block on the first prompt. The matrix asserts what happens when nobody can
+    # be asked, so it says so rather than relying on how it was invoked.
+    out="$(cd "$dir" && NO_COLOR=1 KMPILOT_ASSUME_YES=1 KMPILOT_NONINTERACTIVE=1 \
+        KMPILOT_SOURCE_DIR="$KMPILOT_ROOT" \
         bash "$KMPILOT_ROOT/install.sh" --adopt $flags 2>&1)"
     rc=$?
 
@@ -355,18 +393,21 @@ run_variant() {
                         break
                     fi
                 done
-                # optional per-variant assertion on what actually landed
-                local fn="post_${name//-/_}" detail
-                if [[ "$ok" == "yes" ]] && declare -F "$fn" >/dev/null; then
-                    if ! detail="$("$fn" "$dir")"; then
-                        ok=no; reason="${detail:-post-check failed}"
-                    fi
-                fi
             fi
             ;;
     esac
     if [[ "$ok" == "yes" ]] && ! printf '%s' "$out" | grep -qF -- "$pattern"; then
         ok=no; reason="missing expected text: $pattern"
+    fi
+
+    # Optional per-variant assertion on what landed on disk — available to every
+    # outcome, not just `applies`: "it refused AND wrote nothing" is exactly the
+    # kind of claim worth checking against the filesystem rather than the log.
+    local fn="post_${name//-/_}" detail
+    if [[ "$ok" == "yes" ]] && declare -F "$fn" >/dev/null; then
+        if ! detail="$("$fn" "$dir")"; then
+            ok=no; reason="${detail:-post-check failed}"
+        fi
     fi
 
     if [[ "$ok" == "yes" ]]; then

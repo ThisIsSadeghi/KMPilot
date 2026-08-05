@@ -34,6 +34,8 @@
 #                           tag; set to "main" for the bleeding edge)
 #   NO_COLOR                Set to any value to disable colored output.
 #   KMPILOT_ASSUME_YES      Set to 1 to skip the confirmation prompt.
+#   KMPILOT_NONINTERACTIVE  Set to 1 to never prompt, even when a terminal exists.
+#                           Anything that would be asked becomes a refusal instead.
 #   KMPILOT_SOURCE_DIR      --adopt only: stage from a local KMPilot checkout instead
 #                           of cloning a release (for testing an unreleased installer).
 
@@ -71,7 +73,19 @@ fi
 # Readable is not enough: under CI, a nested subshell, or `bash <script` the
 # device can open for read and still fail on write with "Device not configured",
 # which under `set -e` aborts the run mid-prompt. Probe an actual write.
-if { true > /dev/tty; } 2>/dev/null; then TTY=/dev/tty; else TTY=""; fi
+#
+# KMPILOT_NONINTERACTIVE=1 forces the no-terminal path even when /dev/tty is
+# openable. Capturing stdout is not enough to make a run non-interactive — a
+# script launched from a terminal still has a controlling tty — so the adopt
+# matrix, which asserts what happens when nobody can be asked, needs to say so
+# explicitly or it blocks on the first prompt when run by hand.
+if [[ "${KMPILOT_NONINTERACTIVE:-0}" == "1" ]]; then
+    TTY=""
+elif { true > /dev/tty; } 2>/dev/null; then
+    TTY=/dev/tty
+else
+    TTY=""
+fi
 
 STEP_NO=0
 step() {   # numbered top-level step
@@ -512,43 +526,77 @@ adopt_android_app_deps() {
 }
 
 # How the app module was decided. A guess gets confirmed with the user; a real
-# signal does not. detect_app_module prints "<module> <confidence>" rather than
-# setting this directly: it runs inside a command substitution, and a subshell's
-# assignments never reach the caller.
+# signal does not. detect_app_module prints its answer rather than setting these
+# directly: it runs inside a command substitution, and a subshell's assignments
+# never reach the caller.
 APP_MODULE_CONFIDENCE=weak
+APP_MODULE_CANDIDATES=""
+
+# Every candidate module matching ONE app-shell signal — all of them, never just
+# the first. Two modules both bootstrapping Koin is the shape this exists for:
+# returning on the first match resolved it to whichever sorted first, silently,
+# and every downstream value (the package prefix, which build file gets the core
+# dependencies, where the Koin glue is written) hangs off that one answer.
+app_signal_matches() {  # <koin|entry|androiddep>
+    local m d
+    case "$1" in
+        koin)
+            while IFS= read -r m; do
+                grep -rqs "startKoin" "$m/src" 2>/dev/null && printf '%s\n' "$m"
+            done < <(adopt_app_candidates)
+            ;;
+        entry)
+            while IFS= read -r m; do
+                grep -rqsE 'NavHost|setContent|@Composable[[:space:]]+fun[[:space:]]+App' \
+                    "$m/src" 2>/dev/null && printf '%s\n' "$m"
+            done < <(adopt_app_candidates)
+            ;;
+        androiddep)
+            while IFS= read -r d; do
+                while IFS= read -r m; do
+                    [[ "$m" == "$d" ]] && printf '%s\n' "$m"
+                done < <(adopt_app_candidates)
+            done < <(adopt_android_app_deps)
+            ;;
+    esac
+    # Matching nothing is a normal answer, not an error. Without this the last
+    # failed test becomes the exit status and `set -e` aborts the run.
+    return 0
+}
 
 # The app module: whichever module starts Koin, hosts the nav graph / Compose
 # entry point, or is what the Android app depends on. Never assumed to be named
 # composeApp — an adopted repo names its modules whatever it likes.
-# Prints: "<module> strong|weak" (empty when there is no candidate at all).
+#
+# Prints "<module>|<confidence>|<candidates>", empty when there is no candidate
+# at all. Confidence is one of:
+#   strong     exactly one match in the winning signal tier — used unconfirmed
+#   ambiguous  more than one match in that tier — the caller asks, never picks
+#   weak       no signal anywhere — first candidate, offered as a guess
+# <candidates> is the list worth showing the user for that verdict.
 detect_app_module() {
-    local m d
-    while IFS= read -r m; do
-        grep -rqs "startKoin" "$m/src" 2>/dev/null \
-            && { printf '%s strong' "$m"; return 0; }
-    done < <(adopt_app_candidates)
-
-    while IFS= read -r m; do
-        grep -rqsE 'NavHost|setContent|@Composable[[:space:]]+fun[[:space:]]+App' "$m/src" 2>/dev/null \
-            && { printf '%s strong' "$m"; return 0; }
-    done < <(adopt_app_candidates)
-
-    while IFS= read -r d; do
-        while IFS= read -r m; do
-            [[ "$m" == "$d" ]] \
-                && { printf '%s strong' "$m"; return 0; }
-        done < <(adopt_app_candidates)
-    done < <(adopt_android_app_deps)
+    local tier hits n all
+    for tier in koin entry androiddep; do
+        hits="$(app_signal_matches "$tier" | sort -u)"
+        [[ -n "$hits" ]] || continue
+        n="$(printf '%s\n' "$hits" | wc -l | tr -d '[:space:]')"
+        if [[ "$n" -eq 1 ]]; then
+            printf '%s|strong|%s' "$hits" "$hits"
+        else
+            printf '%s|ambiguous|%s' \
+                "$(printf '%s\n' "$hits" | head -n1)" \
+                "$(printf '%s\n' "$hits" | tr '\n' ' ' | sed 's/ *$//')"
+        fi
+        return 0
+    done
 
     # No signal at all — take the first candidate but mark it a guess, so the
     # caller asks instead of silently building on it.
-    while IFS= read -r m; do
-        printf '%s weak' "$m"
-        return 0
-    done < <(adopt_app_candidates)
-    # Finding nothing is a normal answer (the caller turns it into a clear
-    # refusal). Without this the loop's last failed test becomes the function's
-    # exit status and `set -e` aborts the run with no message at all.
+    all="$(adopt_app_candidates)"
+    [[ -n "$all" ]] || return 0
+    printf '%s|weak|%s' \
+        "$(printf '%s\n' "$all" | head -n1)" \
+        "$(printf '%s\n' "$all" | tr '\n' ' ' | sed 's/ *$//')"
     return 0
 }
 
@@ -640,19 +688,80 @@ Re-run with --force to re-apply. Re-applying is idempotent: it never duplicates 
     if [[ -n "$APP_MODULE_ARG" ]]; then
         APP_MODULE="$APP_MODULE_ARG"
         APP_MODULE_CONFIDENCE=strong
+        APP_MODULE_CANDIDATES="$APP_MODULE_ARG"
         [[ -d "$APP_MODULE/src/commonMain" ]] \
             || die "--app-module=$APP_MODULE has no src/commonMain."
     else
         local detected
         detected="$(detect_app_module)"
-        APP_MODULE="${detected%% *}"
-        APP_MODULE_CONFIDENCE="${detected##* }"
+        IFS='|' read -r APP_MODULE APP_MODULE_CONFIDENCE APP_MODULE_CANDIDATES \
+            <<< "$detected"
     fi
     [[ -n "$APP_MODULE" ]] || die "This does not look like a Kotlin Multiplatform project.
 No module in settings.gradle.kts has a src/commonMain source set.
 
 Adopt mode installs a KMP pipeline; there is nothing safe to do in a non-KMP repo.
 Bringing an Android-only app to KMP is a different job — see 'migrate-feature' upstream."
+
+    # Everything downstream hangs off this one value — the package prefix read
+    # below, which build file gets the core dependencies, where the Koin glue is
+    # written. A wrong guess is silent and expensive, so a guess is never used
+    # unconfirmed, and the confirmation happens HERE, before the package prefix is
+    # derived from it — confirming afterwards left the prefix read off the module
+    # the user had just rejected.
+    #
+    # Two shapes reach a human, for opposite reasons. `weak` is absence: no signal
+    # anywhere, so the first candidate is offered as a default and Enter accepts it.
+    # `ambiguous` is contradiction: several modules each look like the shell, so
+    # there is nothing to default to — pressing Enter would be the silent coin flip
+    # this exists to remove, and a non-interactive run refuses rather than picks.
+    if [[ "$APP_MODULE_CONFIDENCE" == "ambiguous" ]]; then
+        warn "More than one module looks like your app shell:"
+        substep "candidates: ${BOLD}${APP_MODULE_CANDIDATES}${RESET}"
+        substep "each shows the same signal (Koin bootstrap / Compose entry point / app dependency),"
+        substep "so detection cannot choose between them."
+        if [[ -n "$TTY" ]]; then
+            local ans
+            while :; do
+                printf '    %s?%s %sWhich one is your app shell%s %s(no default)%s: ' \
+                    "$CYAN" "$RESET" "$BOLD" "$RESET" "$DIM" "$RESET" > /dev/tty
+                read -r ans < "$TTY" || die "Aborted."
+                ans="${ans#:}"; ans="${ans//:/\/}"   # accept :shared as well as shared
+                [[ -n "$ans" ]] || { warn "Name one of: ${APP_MODULE_CANDIDATES}"; continue; }
+                [[ -d "$ans/src/commonMain" ]] || { warn "'$ans' has no src/commonMain."; continue; }
+                APP_MODULE="$ans"
+                APP_MODULE_CONFIDENCE=strong
+                break
+            done
+        else
+            die "Cannot tell which of these is your app shell:
+
+    ${APP_MODULE_CANDIDATES}
+
+Everything adoption writes hangs off that choice — the package prefix, which build
+file gets the core dependencies, where the Koin glue lands — so picking one at
+random here would be silent and expensive. Nothing has been written.
+
+Name it explicitly, or re-run where a terminal can ask you:
+
+    install.sh --adopt --app-module=${APP_MODULE}"
+        fi
+    elif [[ "$APP_MODULE_CONFIDENCE" == "weak" ]]; then
+        warn "Could not tell which module is your app shell — no startKoin, no NavHost,"
+        substep "and no Android application module pointing at one. Best guess: ${BOLD}${APP_MODULE}${RESET}"
+        if [[ -n "$TTY" ]]; then
+            local ans
+            printf '    %scandidates:%s %s\n' "$DIM" "$RESET" "$APP_MODULE_CANDIDATES" > /dev/tty
+            printf '    %s?%s %sApp module%s %s[%s]%s: ' \
+                "$CYAN" "$RESET" "$BOLD" "$RESET" "$DIM" "$APP_MODULE" "$RESET" > /dev/tty
+            read -r ans < "$TTY" || die "Aborted."
+            ans="${ans:-$APP_MODULE}"
+            [[ -d "$ans/src/commonMain" ]] || die "'$ans' has no src/commonMain."
+            APP_MODULE="$ans"
+        else
+            substep "pass --app-module=<module> to be certain (non-interactive run)"
+        fi
+    fi
 
     PKG_PREFIX="$(detect_pkg_prefix "$APP_MODULE")"
     # An explicit argument always wins; otherwise ask before giving up. Detection
@@ -713,27 +822,6 @@ included builds) applies the Kotlin Multiplatform plugin.
 
 Adopt mode installs a KMP pipeline; there is nothing safe to do in a non-KMP repo.
 Bringing an Android-only app to KMP is a different job — see 'migrate-feature' upstream."
-
-    # Everything downstream hangs off this one value — the package prefix, where
-    # the Koin glue is written, which build file gets the core dependencies. A
-    # wrong guess is silent and expensive, so a guess is never used unconfirmed.
-    if [[ "$APP_MODULE_CONFIDENCE" == "weak" ]]; then
-        warn "Could not tell which module is your app shell — no startKoin, no NavHost,"
-        substep "and no Android application module pointing at one. Best guess: ${BOLD}${APP_MODULE}${RESET}"
-        if [[ -n "$TTY" ]]; then
-            local ans candidates
-            candidates="$(adopt_app_candidates | tr '\n' ' ')"
-            printf '    %scandidates:%s %s\n' "$DIM" "$RESET" "$candidates" > /dev/tty
-            printf '    %s?%s %sApp module%s %s[%s]%s: ' \
-                "$CYAN" "$RESET" "$BOLD" "$RESET" "$DIM" "$APP_MODULE" "$RESET" > /dev/tty
-            read -r ans < "$TTY" || die "Aborted."
-            ans="${ans:-$APP_MODULE}"
-            [[ -d "$ans/src/commonMain" ]] || die "'$ans' has no src/commonMain."
-            APP_MODULE="$ans"
-        else
-            substep "pass --app-module=<module> to be certain (non-interactive run)"
-        fi
-    fi
 
     # A pre-existing `core/common` of THEIR OWN is a name collision, not a
     # module of ours to skip: vendoring is skipped (never clobber) but the app

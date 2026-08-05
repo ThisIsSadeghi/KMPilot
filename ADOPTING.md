@@ -47,6 +47,10 @@ Everything lands as one reviewable `git diff`.
 | `--force` | Re-run over an existing adoption (idempotent) |
 | `--app-module=<module>` | Name the app module explicitly instead of letting detection ask |
 
+| Env var | Effect |
+|---|---|
+| `KMPILOT_NONINTERACTIVE=1` | Never prompt, even from a terminal. Anything that would be asked becomes a refusal |
+
 ## Will it work on my repo?
 
 Every row below is a variant in [`scripts/adopt-matrix.sh`](scripts/adopt-matrix.sh), asserted
@@ -78,6 +82,7 @@ on each change — so this table cannot drift from the behaviour.
 
 | Your project | Why |
 |---|---|
+| Two modules that both look like the app shell | Both named, and you're asked which. Everything adoption writes hangs off that answer, so it is never guessed — pass `--app-module=` on a non-interactive run |
 | Not Kotlin Multiplatform | Adopt mode installs a KMP pipeline. Android→KMP is a different job (`migrate-feature`, upstream) |
 | Targets we can't serve (`wasmJs`, `js`, `macos*`, `watchos*`, `linux*`) | Vendored core ships `androidMain` / `iosMain` / `desktopMain` actuals only — adopting would leave that target without a variant |
 | Groovy DSL (`settings.gradle`) | Not supported **yet** — tractable, unscheduled. [Open an issue](https://github.com/ThisIsSadeghi/KMPilot/issues) if you want it; that's what decides |

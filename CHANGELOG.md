@@ -11,6 +11,24 @@ may conflict), or **[Breaking]** (manual steps required).
 
 ## [Unreleased]
 
+### Fixed
+
+- **[Tooling]** **Adopting a repo with two plausible app modules no longer picks one
+  silently.** App-module detection returned the first module matching a signal and called
+  it certain, so a project where both `shared` and `mobile` bootstrap Koin got whichever
+  sorted first — and the package prefix, the core dependencies and the Koin glue all
+  followed that answer. Detection now collects every match in the winning signal tier: one
+  match is used as before, more than one names them all and asks, and a non-interactive run
+  refuses with the candidates and the `--app-module=` flag rather than guessing. The
+  confirmation also moved ahead of package-prefix detection, which previously read the
+  prefix off the module the user was about to reject.
+
+### Added
+
+- **[Tooling]** `KMPILOT_NONINTERACTIVE=1` makes `install.sh` never prompt, even with a
+  terminal attached — anything it would ask becomes a refusal. Capturing stdout was not
+  enough to make a run non-interactive, so scripted adoptions could block on a prompt.
+
 ### Changed
 
 - **[Tooling]** **Feature writes are blocked in an uninitialized project.** The
