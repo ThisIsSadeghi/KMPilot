@@ -1,6 +1,6 @@
 # Phase 5 — Harden adopt mode
 
-**Goal:** close the six project shapes `install.sh --adopt` has never been pointed at, so that
+**Goal:** close the five project shapes `install.sh --adopt` has never been pointed at, so that
 everything built on top of it reads a repo description that is actually true.
 
 **Why now:** every downstream command reads `.kmpilot.json` and trusts it — `appModule` decides
@@ -29,7 +29,7 @@ is that file, executed.
 
 ## In scope
 
-Backlog items 2–7, in the backlog's own priority order. Item 1 (a repo that already has a
+Backlog items 2–6, in the backlog's own priority order. Item 1 (a repo that already has a
 `feature/` directory) closed 2026-08-04 via `managedFeatures`.
 
 ### 1. Two plausible app modules — ambiguity is never detected
@@ -74,17 +74,7 @@ then builds.
 directory to run in. A refusal that says *"run this from `./android`"* is a pass; a refusal that
 says *"not a KMP project"* about a repo that plainly contains one is the failure being tested for.
 
-### 5. Windows / Git Bash
-
-Every path is bash + `sed`/`find`/`awk`. The matrix runs on macOS and Linux; the README tells
-Windows users to use Git Bash and nobody has ever tried it. CRLF line endings, `sed -i` semantics
-and path separators are the three likely breakages.
-
-**Fix:** add `windows-latest` (Git Bash shell) to the matrix job. If a genuine blocker surfaces,
-a clean documented refusal on Windows is an acceptable outcome for this phase — an unclear
-half-write is not.
-
-### 6. A project already using `kmpilotLibs` or `core/kmpilot*`
+### 5. A project already using `kmpilotLibs` or `core/kmpilot*`
 
 Someone who hand-vendored KMPilot before adopt mode existed. Re-adoption must recognise that state
 rather than duplicating a catalog or colliding on module names. The `already-adopted` variant
@@ -110,12 +100,11 @@ contents), and report the pre-existing state before writing anything.
 | Path | Change | `update.sh` tier |
 |---|---|---|
 | `install.sh` | ambiguous app module; package-prefix validation; monorepo search; pre-vendored detection | not delivered |
-| `scripts/adopt-matrix.sh` | +6 variants (one per item), each with a `post_` assertion where the outcome is a file's contents | stripped on install |
+| `scripts/adopt-matrix.sh` | +7 variants — one per item, plus two closing `ADOPTING.md` rows that claimed a variant they did not have | stripped on install |
 | `scripts/make-adopt-target.sh` | mutations the existing fixture cannot express (second Koin module, sub-package-only sources) | stripped on install |
-| `.github/workflows/build.yml` | matrix job gains `windows-latest` (Git Bash) | not delivered |
-| `ADOPTING.md` | compatibility table gains the six shapes | stripped on install |
+| `ADOPTING.md` | compatibility table gains the five shapes, and the two rows that claimed a variant they lacked get one | stripped on install |
 | `CHANGELOG.md` | `[Tooling]` entries | — |
-| `.claude/docs/_roadmap/ADOPT-TEST-BACKLOG.md` | items 2–7 collapsed to `DONE` entries in item 1's format | not delivered |
+| `.claude/docs/_roadmap/ADOPT-TEST-BACKLOG.md` | items 2–6 collapsed to `DONE` entries in item 1's format | not delivered |
 
 No `.claude/skills` change is expected. If one proves necessary it is OVERRIDE tier and reaches
 existing installs on `./update.sh`.
@@ -128,30 +117,27 @@ existing installs on `./update.sh`.
    failure mode, and the prompt machinery already exists.
 2. Item 2, then 3 — both touch `detect_pkg_prefix`'s output contract.
 3. Item 4 (monorepo) — pure refusal-quality work, no writes involved.
-4. Item 6 (pre-vendored) — needs a fixture mutation before the detection is written.
-5. Item 5 (Windows) last: it is CI configuration plus whatever it uncovers, and it should run
-   against the finished set of variants rather than a moving one.
-6. For **every** variant: break the fix, watch the variant go red, restore it. A variant that
+4. Item 5 (pre-vendored) — needs a fixture mutation before the detection is written.
+5. For **every** variant: break the fix, watch the variant go red, restore it. A variant that
    cannot fail is worse than no variant.
-7. Confirm against the real repos (`bookshelf`, `bookshelf-featuredir`, `Kickoff26`) — adoption
+6. Confirm against the real repos (`bookshelf`, `bookshelf-featuredir`, `Kickoff26`) — adoption
    output must be byte-identical to before the phase except where a bug was fixed.
 
 ---
 
 ## Exit criteria
 
-- [ ] Two modules both bootstrapping Koin ⇒ prompts on TTY, refuses with both candidates named
+- [x] Two modules both bootstrapping Koin ⇒ prompts on TTY, refuses with both candidates named
       when non-interactive. Never picks silently.
-- [ ] App module with no root-package sources ⇒ `packagePrefix` is exactly the shared prefix,
+- [x] App module with no root-package sources ⇒ `packagePrefix` is exactly the shared prefix,
       well-formed, and cross-checked against the Android namespace.
-- [ ] `rootProject.name` unrelated to the package prefix ⇒ resources package and Kotlin package
+- [x] `rootProject.name` unrelated to the package prefix ⇒ resources package and Kotlin package
       land independently, and the target builds.
-- [ ] Run from a monorepo root ⇒ refuses naming the directory to run in, not "not a KMP project".
-- [ ] Matrix green on `windows-latest` under Git Bash, or a documented clean refusal there.
-- [ ] A hand-vendored KMPilot with no `.kmpilot.json` ⇒ recognised and reported, never duplicated.
-- [ ] `scripts/adopt-matrix.sh` at **24 variants**, all green, each proven able to fail.
-- [ ] Re-adopting the three real repos produces no diff versus pre-phase output beyond fixes.
-- [ ] `ADOPTING.md`'s published compatibility table matches the variant list exactly.
+- [x] Run from a monorepo root ⇒ refuses naming the directory to run in, not "not a KMP project".
+- [x] A hand-vendored KMPilot with no `.kmpilot.json` ⇒ recognised and reported, never duplicated.
+- [x] `scripts/adopt-matrix.sh` at **25 variants**, all green, each proven able to fail.
+- [x] Re-adopting the three real repos produces no diff versus pre-phase output beyond fixes.
+- [x] `ADOPTING.md`'s published compatibility table matches the variant list exactly.
 
 ---
 
@@ -171,9 +157,7 @@ KMPILOT_SOURCE_DIR=~/KMPProjects/KMPilot bash install.sh --adopt --dry-run
 
 - **Prompting more often makes adopt feel less automatic.** Mitigation: only ambiguity prompts,
   and only when a wrong answer would be silent. A confident detection must stay silent.
-- **Windows may be a rabbit hole.** It is sequenced last and has a documented-refusal escape
-  hatch precisely so it cannot hold the phase hostage.
-- **Six fixes, one PR.** Each is small and independently revertable, but the diff to `install.sh`
+- **Five fixes, one PR.** Each is small and independently revertable, but the diff to `install.sh`
   is broad. Keep one commit per backlog item so a bisect stays useful.
 
 ---

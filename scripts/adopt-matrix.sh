@@ -299,6 +299,33 @@ post_subpackages_only() {
     return 0
 }
 
+# The inferred package prefix swallowing a sub-package. Every source moves one
+# level down in the package tree while the Android build keeps declaring
+# `com.acme.notes`, so the longest-common-prefix walk yields `com.acme.notes.ui`
+# — a perfectly well-formed package, and wrong: every vendored core module would
+# be renamed into a UI sub-package. Only the declared namespace/applicationId can
+# see it, because only they state the identity rather than infer it.
+mut_namespace_mismatch() {
+    local f
+    while IFS= read -r f; do
+        sedi 's|^package com\.acme\.notes|package com.acme.notes.ui|' "$f"
+    done < <(grep -rl '^package com\.acme\.notes' "$1/shared/src" 2>/dev/null)
+}
+
+# Naming the disagreement is half the job; offering the declared identity as the
+# fix is the other half.
+post_namespace_mismatch() {
+    printf '%s' "$2" | grep -qF 'install.sh --adopt AcmeNotes com.acme.notes' \
+        || { echo "warned but did not offer the declared identity as the fix"; return 1; }
+    return 0
+}
+
+# Kotlin below KMPilot's tested floor. The target's own version always wins — it
+# is never overridden — so this warns and adopts rather than refusing.
+mut_old_versions() {
+    sedi 's|^kotlin = ".*"|kotlin = "2.0.0"|' "$1/gradle/libs.versions.toml"
+}
+
 # Someone who hand-vendored KMPilot before adopt mode existed: a kmpilotLibs
 # catalog, its registration in settings, and core modules namespaced out of the
 # way — and no .kmpilot.json, because there was nothing to write one. Adopting
@@ -467,6 +494,8 @@ VARIANTS=(
   "unrelated-root-name|mut_unrelated_root_name|applies|core/designsystem|"
   "monorepo|mut_monorepo|refuses|cd android|--dry-run"
   "pre-vendored|mut_pre_vendored|refuses|already carries KMPilot, but has no .kmpilot.json|"
+  "namespace-mismatch|mut_namespace_mismatch|warns|does not match what your Android build declares|--dry-run"
+  "old-versions|mut_old_versions|warns|below KMPilot's tested floor|--dry-run"
 )
 
 run_variant() {
