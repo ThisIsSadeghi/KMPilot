@@ -65,6 +65,27 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > refuses as a template, correctly, and writes nothing. Both bookshelf repos are done; re-running
 > one only re-tests what is already recorded.
 >
+> **The hand-built projects are specified in
+> [PHASE-6-testbed-projects.md](PHASE-6-testbed-projects.md)** (written 2026-08-06): 25 projects in
+> 5 tiers, each with a self-contained prompt that builds an empty KMP project into one deliberately
+> non-conforming shape, plus the shape's expected outcome and a suggested build order. They live in
+> `~/KMPProjects/kmpilot-testbeds/{NN}-{name}` and arrive **unadopted** — `install.sh --adopt` is
+> under test too, so tier 0 is four projects whose pass condition is a *correct refusal*. **Read that
+> file before running against any of them**; it records what each shape is meant to prove, which
+> matters because a shape that produces zero new findings is what convergence looks like.
+>
+> Highest-value first: **05 `monolith`** (one module, no feature modules — the migration must
+> *create* modules, an operation nothing has tested), **17 `carve-outs`** (must produce zero
+> refusals), **06 `multi-screen-module`** (the only way to fire a mid-rewrite `refuse` on a real
+> repo), **11 `usecase-result`** (an unexercised rewrite cluster and the first real test source sets).
+>
+> **Do NOT build those projects from this session.** The user creates each one himself, in its own
+> folder, in a separate Claude session, by pasting that project's prompt block — that isolation is
+> the design, not an accident. Reading the test-bed file is for knowing what a shape is meant to
+> prove; it is never a work order to start generating repos here. **The migration test begins once
+> the projects exist and the user says so.** If none exists yet, there is nothing to run at step 9
+> — say that plainly rather than manufacturing a test bed.
+>
 > **Three things are recorded but NOT fixed** (see the end of the findings 5–9 section): the
 > report counting its own step as outstanding; a relocated feature's before-counts being lost so
 > the report says "no rule findings were recorded" for the features that needed the most work;
