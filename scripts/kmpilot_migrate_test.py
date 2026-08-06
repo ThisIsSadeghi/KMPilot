@@ -253,6 +253,30 @@ def main() -> int:  # noqa: C901 — a linear script; splitting it would hide th
             "a refused step must not keep an in-progress entry claiming work that was undone",
         )
 
+        # ── refusing over a dirty tree that has no checkpoint ───────────────
+        #
+        # `checkpoint` is skippable — nothing forces it, and going straight from `next`
+        # to editing is one command away. So a step can be rewritten while still
+        # `pending`, and a guard that keys on the status alone reads that as "nothing
+        # was written", records the refusal and leaves the half-rewritten feature the
+        # refusal exists to prevent. Silently. Ask the tree, not only the ledger.
+        pending_step = "relocate-oldscreen"
+        dirty_file = root / "oldscreen/build.gradle.kts"
+        dirty_before = dirty_file.read_text()
+        dirty_file.write_text(dirty_before + "\n// half a rewrite, no checkpoint taken\n")
+        blind = mig(root, "refuse", pending_step, "--reason", "found a blocker mid-pass")
+        f.want(
+            blind.returncode != 0 and "checkpoint" in blind.stderr,
+            f"refusing over uncommitted work with no checkpoint must be refused, not "
+            f"recorded: {blind.stdout[:160]}{blind.stderr[:160]}",
+        )
+        f.want(
+            (ledger(root).get("refusedAtRewrite") or {}).get(pending_step) is None,
+            "a refusal that could not restore must not be recorded — the record would say "
+            "the feature was left as found while the rewrite is still on disk",
+        )
+        dirty_file.write_text(dirty_before)
+
         # ── verify is earned, not asserted ──────────────────────────────────
         mig(root, "checkpoint", "relocate-oldscreen")
         unfinished = mig(root, "verify", "relocate-oldscreen")

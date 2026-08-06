@@ -720,6 +720,44 @@ def check_r12res(feature, sources, ctx):
     ]
 
 
+def check_s5(feature, sources, ctx):
+    """S5 — a module that declares `@Serializable` applies the serialization plugin.
+
+    The annotation is only an annotation: without the compiler plugin on THAT module
+    no serializer is generated, and nothing says so. The module compiles, `archTest`
+    passes, every target links — and the app dies the moment the type is serialized.
+    It is the crash a migration is most likely to introduce, because Integration
+    Point 4 hands each feature a type-safe `@Serializable` nav route it did not have
+    before, while the plugin list is inherited from whatever the module was before
+    the rewrite. Found on a real repo run: a migrated feature launched straight into
+    `SerializationException: Serializer for class 'SearchRoute' is not found`.
+
+    Scoped to the `plugins { }` block on purpose — `implementation(libs.kotlinx.
+    serialization.core)` is the runtime library, not the compiler plugin, and reading
+    it as one would report the crash as fixed.
+    """
+    declares = [
+        (src, line)
+        for src in sources
+        for line, _m in src.scan(re.compile(r"@Serializable\b"))
+    ]
+    if not declares:
+        return []
+    gradle = read(ctx["root"] / f"feature/{feature}/build.gradle.kts")
+    block = re.search(r"\bplugins\s*\{(.*?)\}", gradle, re.DOTALL)
+    if block and re.search(r"serialization", block.group(1), re.IGNORECASE):
+        return []
+    src, line = declares[0]
+    return [
+        violation(
+            feature, "S5", "error", f"feature/{feature}/build.gradle.kts", 0,
+            f"`@Serializable` at {src.rel}:{line} but the module's `plugins {{ }}` block "
+            "does not apply the kotlinx.serialization plugin — no serializer is generated "
+            "and the app throws SerializationException at runtime",
+        )
+    ]
+
+
 def check_r13(feature, sources, ctx):
     """R13 — single app-shell Scaffold; features own no insets but their own
     bottom nav-bar inset."""
@@ -957,9 +995,10 @@ FEATURE_CHECKS = [
     ("S1", check_s1),
     ("S2", check_s2),
     ("S4", check_s4),
+    ("S5", check_s5),
     ("I", check_integration),  # I1-I4
 ]
-# 14 feature-scoped checks + 4 integration points + 1 repo-scoped boundary check.
+# 15 feature-scoped checks + 4 integration points + 1 repo-scoped boundary check.
 CHECK_COUNT = (len(FEATURE_CHECKS) - 1) + 4 + 1
 
 SEVERITY_ORDER = {"error": 0, "warning": 1}
@@ -1158,8 +1197,19 @@ def run(root: Path, features: list[str]) -> tuple[list[dict], dict]:
         ),
         # KMPilot names it BaseAppNavHost.kt; an adopted project may declare its
         # NavHost anywhere (often App.kt), so fall back to content.
+        #
+        # The call is matched with a `\w*` prefix, not `\b`, because the host is far
+        # more likely to call a WRAPPER than `NavHost` itself — `XNavHost` is the
+        # design system's own, and it is what /create-feature and the template
+        # generate against. `\bNavHost\s*\(` cannot match `XNavHost(` (no word
+        # boundary between two word characters), so every adopted project that
+        # navigates through the wrapper was told it had no NavHost at all. That is a
+        # WRONG advisory, and the expensive half is not the message: with no nav host
+        # found, the real I4 check never runs, so a feature genuinely missing from the
+        # nav graph goes unreported. `NavHostController(` still does not match — the
+        # `\(` has to follow `NavHost` immediately.
         "nav_host": find_first(root, f"{app_module}/src/*/kotlin/**/*NavHost*.kt")
-        or find_first_containing(root, f"{app_module}/src/*/kotlin/**/*.kt", r"\bNavHost\s*\("),
+        or find_first_containing(root, f"{app_module}/src/*/kotlin/**/*.kt", r"\w*NavHost\s*\("),
     }
     violations: list[dict] = []
     for feature in features:

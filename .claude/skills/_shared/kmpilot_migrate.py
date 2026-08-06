@@ -525,9 +525,18 @@ def cmd_refuse(root: Path, plan: dict, step: dict, args, color: Palette) -> int:
         except GitError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-    elif prior == "in-progress":
-        print(f"error: {step['id']} is in progress but has no checkpoint, so it cannot be put "
-              "back to how it was found. Restore it by hand, then refuse.", file=sys.stderr)
+    elif prior == "in-progress" or is_dirty(root):
+        # `pending` is not proof nothing was written. `checkpoint` is skippable — nothing
+        # forces it, and going straight from `next` to editing is one command away — so a
+        # step can be rewritten while still `pending`, and this branch used to key on the
+        # status alone and record the refusal over a modified tree. That leaves exactly the
+        # half-rewritten feature the refusal exists to prevent, silently. Ask the tree, not
+        # only the ledger.
+        why = ("is in progress" if prior == "in-progress"
+               else "has uncommitted changes")
+        print(f"error: {step['id']} {why} but has no checkpoint, so it cannot be put "
+              "back to how it was found. Commit or discard the work (or "
+              f"`checkpoint {step['id']}` first), then refuse.", file=sys.stderr)
         return 1
 
     plan.setdefault("refusedAtRewrite", {})[step["id"]] = {

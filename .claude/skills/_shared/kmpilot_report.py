@@ -460,13 +460,21 @@ def print_state(state: dict, plan: dict, color: Palette, header: str) -> None:
               f"  tests={','.join(row['tests']) or 'none'}"
               f"  spec={'yes' if row['hasSpec'] else 'missing'}{tail}")
     if state["managed"] is None:
-        print(f"  {color.warning}no managedFeatures key{color.off} — a template project; every "
-              "feature is already graded strictly and nothing is promoted")
+        # Not necessarily a template — an ADOPTED project whose features all sat outside
+        # `feature/` at adopt time has no key either, and calling that a template misnames
+        # the repo the user is standing in. What is actually known is the part that matters:
+        # no key means nothing was ever graded leniently, so there is nothing to promote.
+        print(f"  {color.warning}no managedFeatures key{color.off} — nothing here is graded "
+              "leniently, so every feature is already strict and nothing is promoted")
 
 
 def cmd_plan(root: Path, plan: dict, state: dict, args, color: Palette) -> int:
     print_state(state, plan, color, "integrate — dry run, nothing written")
-    print(f"  would promote: {', '.join(state['toPromote']) or 'nothing'}")
+    # `promote` no-ops when there is no managedFeatures key, so listing candidates here
+    # would have the dry run predict an edit the real command never makes — the one thing
+    # a dry run exists to prevent. Ask the same question `cmd_promote` asks.
+    would = [] if state["managed"] is None else state["toPromote"]
+    print(f"  would promote: {', '.join(would) or 'nothing'}")
     print(f"  would write:   {REPORT_REL}")
     if state["missingSpecs"]:
         print(f"  {color.warning}specs missing{color.off}: {', '.join(state['missingSpecs'])} — "

@@ -1220,7 +1220,7 @@ EOF
     invariant "$dir"
     expect '^feature  :feature:portable .*advisory=' \
         "an advisory finding stays visible — not counted as work is not the same as not shown"
-    reject '^feature  :feature:portable .*findings=[^ ]*I4' \
+    reject '^feature  :feature:portable .*findings=[^=]*I4' \
         "an unfixable I4 must not be counted as work — that total can never be reached"
     plan "$dir"
     reject '^pass .*rules=[^ ]*I4' \
@@ -1280,6 +1280,157 @@ PY
         "with the core not enabling it either, no feature needs the flag"
     finish
 fi
+
+# -- the nav host is usually a WRAPPER ---------------------------------------
+#
+# From the second real run: KMPilot's own design system ships `XNavHost`, and it is what
+# /create-feature and the template generate against -- so an adopted project's nav host is
+# far more often `XNavHost(` than `NavHost(`. A \b-anchored match cannot see it (no word
+# boundary between two word characters), and the project was told it had no NavHost at all.
+# The expensive half is not the wrong message: with no nav host found, the real I4 check
+# never runs, so a feature genuinely missing from the nav graph goes unreported.
+
+if matches nav-host-wrapper; then
+    variant nav-host-wrapper "the app's NavHost is the design system's XNavHost wrapper"; dir="$VDIR"
+    python3 - "$dir/shared/src/commonMain/kotlin/$PKG_PATH/App.kt" <<'WRAP'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+s = s.replace("import androidx.navigation.compose.NavHost",
+              "import com.acme.notes.designsystem.XNavHost")
+s = s.replace("NavHost(", "XNavHost(")
+p.write_text(s)
+WRAP
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: navigate through the XNavHost wrapper" >/dev/null 2>&1
+    invariant "$dir"
+    reject '^feature  :feature:portable .*advisory=' \
+        "a project that HAS a nav host must not be told it has none - that suppresses the real I4"
+    expect '^feature  :feature:portable .*findings=[^=]*I4' \
+        "with the wrapper recognised, an unregistered feature is real, fixable work again"
+    finish
+fi
+
+# -- @Serializable without the compiler plugin -------------------------------
+#
+# From the second real run: the migrated app compiled on all three targets, passed strict
+# archTest, installed -- and died on launch with "Serializer for class 'SearchRoute' is not
+# found". Integration Point 4 hands each migrated feature a type-safe @Serializable nav
+# route it did not have before, while the plugins block is inherited from whatever the
+# module was before the rewrite. Nothing static caught it.
+
+if matches serialization-plugin-missing; then
+    variant serialization-plugin-missing "a feature declares @Serializable, its module applies no serialization plugin"; dir="$VDIR"
+    mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation"
+    cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation/PortableNavigation.kt" <<'ROUTE'
+package com.acme.notes.portable.presentation.navigation
+
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object PortableRoute
+ROUTE
+    python3 - "$dir/feature/portable/build.gradle.kts" <<'STRIP'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace("    alias(libs.plugins.kotlinSerialization)\n", ""))
+STRIP
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: serializable route, no plugin" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^feature  :feature:portable .*findings=[^=]*S5' \
+        "a serializer that is never generated must be caught statically - only a launch finds it otherwise"
+    finish
+fi
+
+if matches control-serialization-plugin-present; then
+    variant control-serialization-plugin-present "NEGATIVE CONTROL: the plugin IS applied"; dir="$VDIR"
+    mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation"
+    cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation/PortableNavigation.kt" <<'ROUTE'
+package com.acme.notes.portable.presentation.navigation
+
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object PortableRoute
+ROUTE
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: serializable route, plugin applied" >/dev/null 2>&1
+    invariant "$dir"
+    reject '^feature  :feature:portable .*findings=[^=]*S5' \
+        "a correctly configured module must not be told to add a plugin it already has"
+    finish
+fi
+
+if matches control-serialization-lib-only; then
+    variant control-serialization-lib-only "NEGATIVE CONTROL: the runtime LIBRARY is present, the plugin is not"; dir="$VDIR"
+    # The library dependency and the compiler plugin are different things, and only the
+    # plugin generates serializers. Matching "serialization" anywhere in the build file
+    # would read the dependency as the fix and report the crash as already handled.
+    mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation"
+    cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/navigation/PortableNavigation.kt" <<'ROUTE'
+package com.acme.notes.portable.presentation.navigation
+
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object PortableRoute
+ROUTE
+    python3 - "$dir/feature/portable/build.gradle.kts" <<'LIBONLY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text().replace("    alias(libs.plugins.kotlinSerialization)\n", "")
+s = s.replace("commonMain.dependencies {",
+              "commonMain.dependencies {\n            implementation(libs.kotlinx.serialization.json)", 1)
+s = s.replace("commonMain {\n            dependencies {",
+              "commonMain {\n            dependencies {\n                implementation(libs.kotlinx.serialization.json)", 1)
+p.write_text(s)
+LIBONLY
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: serialization library but no plugin" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^feature  :feature:portable .*findings=[^=]*S5' \
+        "the runtime library is not the compiler plugin - the crash is still live"
+    finish
+fi
+
+
+if matches control-navhost-mention-only; then
+    variant control-navhost-mention-only "NEGATIVE CONTROL: NavHostController named, no nav host called"; dir="$VDIR"
+    # The wrapper match is `\w*NavHost\s*\(` and not a bare `NavHost` for a reason the
+    # checker's own docstring records: a file that merely NAMES the type must not earn
+    # the nav-host role. `NavHostController` is the near-miss that nearly did it. If the
+    # `\(` ever goes, this file is picked as the nav host, the advisory disappears, and
+    # I4 is checked against a file that registers nothing — reporting every feature as
+    # unregistered. Not a wrong advisory: a whole repo of wrong errors.
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/App.kt" <<'MENTION'
+package com.acme.notes
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.navigation.NavHostController
+
+@Composable
+fun App(controller: NavHostController? = null) {
+    val stand: NavHostController? = controller
+    MaterialTheme { }
+}
+MENTION
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: names NavHostController, calls no nav host" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^feature  :feature:portable .*advisory=' \
+        "naming NavHostController is not having a nav host — the advisory must stand"
+    reject '^feature  :feature:portable .*findings=[^=]*I4' \
+        "a file that only names the type must not be graded as the nav host"
+    finish
+fi
+
 
 echo
 echo "${DIM}────────────────────────────────────────────────────────────${OFF}"

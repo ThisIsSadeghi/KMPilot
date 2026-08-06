@@ -2,7 +2,7 @@
 
 All skills and agents import this file. Do not duplicate these rules elsewhere.
 
-**The mechanized half of these rules is enforced by a failing build, not a prompt:** `./gradlew archTest` (thin wrapper over [`_shared/kmpilot_check.py`](kmpilot_check.py)) runs 19 deterministic checks — R3, R5, R7, R8, R9, R11a/b/c, R12, R13, the `Screen.kt` allowlist, `components/` placement, the `.app`-tier boundary, the preview import, and the 4 integration points — writes `.claude/docs/_project/check-report.json`, and exits non-zero on any `error`. `/review-feature` consumes that report instead of re-deriving it, so a review and a CI run cannot disagree. Rules 1, 2, 4, 10 and 14 stay judgment calls. Scanning a codebase that has **not** adopted KMPilot yet: add `--baseline` (same checks, errors reported as warnings, exit 0).
+**The mechanized half of these rules is enforced by a failing build, not a prompt:** `./gradlew archTest` (thin wrapper over [`_shared/kmpilot_check.py`](kmpilot_check.py)) runs 20 deterministic checks — R3, R5, R7, R8, R9, R11a/b/c, R12, R13, the `Screen.kt` allowlist, `components/` placement, the `.app`-tier boundary, the preview import, the serialization plugin behind every `@Serializable`, and the 4 integration points — writes `.claude/docs/_project/check-report.json`, and exits non-zero on any `error`. `/review-feature` consumes that report instead of re-deriving it, so a review and a CI run cannot disagree. Rules 1, 2, 4, 10 and 14 stay judgment calls. Scanning a codebase that has **not** adopted KMPilot yet: add `--baseline` (same checks, errors reported as warnings, exit 0).
 
 ## 14 Critical Rules
 

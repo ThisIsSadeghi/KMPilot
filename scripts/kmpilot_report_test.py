@@ -268,6 +268,31 @@ fun @CAP@Screen() {
         )
         f.want(managed(root) == before, f"test cleanup left the manifest dirty: {managed(root)}")
 
+        # ── no managedFeatures key: the dry run must not predict an edit ────
+        #
+        # A manifest with no key is a project where nothing was ever graded leniently, so
+        # `promote` correctly does nothing. `plan` computed its candidate list without
+        # asking that question, so it announced "would promote: a, b, c" for a command
+        # that promotes none of them — a dry run mispredicting the real thing, which is
+        # the one job a dry run has. Seen on a real adopted repo whose features all sat
+        # outside `feature/` at adopt time.
+        keyed = (root / ".kmpilot.json").read_text()
+        no_key = json.loads(keyed)
+        no_key.pop("managedFeatures", None)
+        (root / ".kmpilot.json").write_text(json.dumps(no_key, indent=2))
+        keyless = rep(root, "plan")
+        f.want(
+            keyless.returncode == 0 and "would promote: nothing" in keyless.stdout,
+            "with no managedFeatures key the dry run must promise nothing, because "
+            f"`promote` does nothing: {keyless.stdout[:400]}",
+        )
+        f.want(
+            "template" not in keyless.stdout,
+            "an adopted project with no key is not a template — naming it one misdescribes "
+            f"the repo the user is standing in: {keyless.stdout[:300]}",
+        )
+        (root / ".kmpilot.json").write_text(keyed)
+
         # ── the report ──────────────────────────────────────────────────────
         written = rep(root, "write")
         f.want(written.returncode == 0, f"write failed: {written.stderr[:300]}")

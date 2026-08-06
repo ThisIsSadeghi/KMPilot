@@ -998,7 +998,11 @@ def discover(root: Path) -> dict:
                     "message": f"compiles to JVM {module.jvm_target} but KMPilot's :core:* "
                     f"modules are JVM {core_jvm_target}, and they expose inline functions "
                     "(setState, the Either/UiState helpers). Raise this module to "
-                    f"JVM {core_jvm_target} or the migrated feature will not compile.",
+                    f"JVM {core_jvm_target} or the migrated feature will not compile. "
+                    "On an Android module raise BOTH halves — `compilerOptions.jvmTarget` "
+                    "AND `compileOptions.source/targetCompatibility`; moving only the "
+                    "Kotlin one fails with \"Inconsistent JVM targets between Java and "
+                    "Kotlin compile tasks\".",
                 }
             )
         cross = [c for c in consumes if modules.get(c) and modules[c].kind == "feature"]

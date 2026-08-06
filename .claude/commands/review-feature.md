@@ -34,7 +34,7 @@ The same checks run in CI as `./gradlew archTest`, which fails the build on any
 
 ## What Gets Checked
 
-### Mechanized — from `check-report.json` (19 checks, reproducible)
+### Mechanized — from `check-report.json` (20 checks, reproducible)
 
 | ID | Rule |
 |---|---|
