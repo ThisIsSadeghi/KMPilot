@@ -23,45 +23,54 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ## ▶ Resume here (2026-08-06) — cold-start contract
 
-Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way
-and has produced four findings, all fixed**. This block is written to be the only thing a fresh
-session has to read to keep going. Start it with exactly:
+Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way:
+two repos migrated end to end, nine findings, all fixed**. This block is written to be the only
+thing a fresh session has to read to keep going. Start it with exactly:
 
 ```
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight (2026-08-06).** Both repos are committed and clean. Confirm with
-> `git status --short` (empty) and `git log --oneline -5` — the tip should be a resume-block
-> update sitting on `244c004` *"Detect the build settings that break a migrated feature"*, the
-> last commit that changed a script. If anything sits above it, work has happened since; trust
-> the repo over this block and update it. Nothing has been pushed and no PR is open.
+> **Nothing is in flight (2026-08-06).** Everything is committed and every tree is clean.
+> Confirm with `git status --short` (empty) and `git log --oneline -4` — the tip is the commit
+> that recorded this block, sitting on `14fa79e` *"Prove the guards can fail"* and `8537389`
+> *"Catch the migration bugs that only a launch would find"*. If anything sits above them, work
+> has happened since; trust the repo over this block and update it. **Nothing has been pushed and
+> no PR is open.**
 >
-> **One repo is migrated: `bookshelf-featuredir`.** Branch `kmpilot/migrate-bookshelf`, 9
-> commits ahead of `master` (`71191d6` checkpoint → `2982203`), clean tree, all 6 steps done. Both features at 0 actionable findings and in
-> `managedFeatures`; strict check 0 errors; android + ios + desktop compile; **the app runs on a
-> device** — search returns Open Library results, favouriting persists through `:core:data` and
-> the Favorites tab reads it back. `git switch -` restores `master` exactly.
+> **Two repos are migrated.**
 >
-> **Four findings came out of that one repo**, each fixed, tested and recorded in its own
-> *Landed* section below. Read them before touching the scripts:
+> - **`bookshelf-featuredir`** — branch `kmpilot/migrate-bookshelf`, 9 commits ahead of `master`
+>   (`71191d6` → `2982203`), clean tree, all 6 steps done.
+> - **`bookshelf`** — branch `kmpilot/migrate-bookshelf`, 12 commits ahead of `master` (`0e865d2`
+>   checkpoint → `ef5f250` report), **all 9 steps done**. 3 features at 0 actionable findings,
+>   strict `kmpilot_check --all` 0 errors 0 warnings, android + iOS + desktop compile, **runs on a
+>   device**. Its 13th commit is the finding-8 follow-up (the serialization plugin on
+>   `feature/search`), added after the run closed. `git switch -` restores `master` exactly in
+>   both, and neither branch is pushed.
 >
-> 1. **Advisory findings** — an unfixable I4 held every feature short of done.
-> 2. **The JVM-target floor** — host JVM 11 vs core JVM 21; nothing compiled.
-> 3. **Compose resources never reaching the APK** — built green, crashed on launch.
-> 4. **`androidTarget { }` invisible to discovery** — found incidentally.
+> **Nine findings so far, all fixed, each with its own *Landed* section below.** Read them before
+> touching the scripts. From `bookshelf-featuredir`: 1 advisory findings · 2 the JVM-target floor ·
+> 3 compose resources never reaching the APK · 4 `androidTarget { }` invisible to discovery. From
+> `bookshelf`: 5 a refusal over a dirty tree left the rewrite behind · 6 `XNavHost` invisible to
+> I4 (which suppressed the real I4 entirely) · 7 the dry run predicted a promotion `promote` never
+> makes · 8 **`@Serializable` with no serialization plugin — new check S5** · 9 a matrix negative
+> control that could not fail.
 >
-> **Findings 3 and 4 survived every static gate.** A green `assembleDebug`, a green strict
-> `archTest` and a green iOS + desktop compile all passed while the app crashed on launch.
-> **Install and run the APK** — building is not evidence.
+> **Four of the nine survived every static gate.** A green `assembleDebug`, a green strict
+> `archTest` and a green iOS + desktop compile all passed while the app crashed on launch — twice,
+> in two different repos. **Install and run the APK.** Building is not evidence.
 >
-> **Resume at:** `bookshelf` — 9 steps, 2 relocates, the root-level-feature path nothing has
-> exercised. Then the hand-built projects. `Kickoff26` is finished: it refuses as a template,
-> correctly, and writes nothing.
+> **Resume at:** the hand-built projects — a shape not yet run. `Kickoff26` is finished: it
+> refuses as a template, correctly, and writes nothing. Both bookshelf repos are done; re-running
+> one only re-tests what is already recorded.
 >
-> **`bookshelf` starts clean:** no `migration-plan.json`, no `MIGRATION-REPORT.md`, no
-> `kmpilot/migrate-*` branch. Its uncommitted Phase-2 adoption output is its normal state — a
-> `begin` absorbs it into the checkpoint commit.
+> **Three things are recorded but NOT fixed** (see the end of the findings 5–9 section): the
+> report counting its own step as outstanding; a relocated feature's before-counts being lost so
+> the report says "no rule findings were recorded" for the features that needed the most work;
+> and **61 of the 66 matrix variants never having been proven able to fail** —
+> `python3 scripts/mutation_audit.py --coverage` prints that list, and it is the largest
+> untested surface in the phase.
 
 ### 1. Where the work lives
 
@@ -71,8 +80,10 @@ project migration"* (steps 5–7), `9169323` *"Add the integrate phase to projec
 (step 8), `54f1183` *"Detect a module that holds several features"* (the shape sweep), plus
 `76dc276` / `9847587` / `66d259f` (resume-block updates). Step 9 so far: `ed2e32a`
 *"Separate findings that are work from findings that are not"*, `244c004` *"Detect the build
-settings that break a migrated feature"*, plus one commit for this block (the record + the stopping
-rule). Do not commit or push unless the user says so.
+settings that break a migrated feature"*, `577484b` *"Record the first real migration and reset the
+resume block"* (findings 1–4, from `bookshelf-featuredir`), then `8537389` *"Catch the migration
+bugs that only a launch would find"* and `14fa79e` *"Prove the guards can fail"* (findings 5–9,
+from `bookshelf`), plus one commit for this block. Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -91,7 +102,8 @@ rule). Do not commit or push unless the user says so.
 | `scripts/kmpilot_migrate_test.py` | clean-phase self-test — **needs git** |
 | `scripts/kmpilot_report_test.py` | integrate-phase self-test — **needs git** |
 | `scripts/make-nonconforming-project.sh` | the Stage B fixture generator |
-| `scripts/migrate-matrix.sh` | 61 variants, 20 negative controls |
+| `scripts/migrate-matrix.sh` | 66 variants, 24 negative controls |
+| `scripts/mutation_audit.py` | breaks each fix on purpose, asserts its guard goes red; `--coverage` lists the variants nobody has proven |
 | `.claude/docs/_roadmap/{PHASE-6-project-migration,README}.md` | this file + the status table |
 
 **`.claude/skills` is generated.** Authored source is the gitignored `pipeline/src`; edit there,
@@ -104,7 +116,8 @@ python3 scripts/kmpilot_discover_test.py        # PASS, ~1s
 python3 scripts/kmpilot_plan_test.py            # PASS, ~2s
 python3 scripts/kmpilot_migrate_test.py         # PASS, ~5s (needs git)
 python3 scripts/kmpilot_report_test.py          # PASS, ~10s (needs git)
-bash scripts/migrate-matrix.sh                  # 61 passed · 0 failed (~2 min, builds the fixture)
+bash scripts/migrate-matrix.sh                  # 66 passed · 0 failed (~2 min, builds the fixture)
+python3 scripts/mutation_audit.py               # 7 caught · 0 survived (~15 min, rebuilds the fixture per mutation)
 python3 scripts/gen-surfaces.py --check         # .claude/ and pipeline/dist match the source
 python3 .claude/skills/_shared/kmpilot_check.py --all   # 0 errors 0 warnings
 claude plugin validate ./pipeline/dist --strict         # passed
@@ -622,6 +635,108 @@ DataStore and the flow round-trips into search's `favoriteKeys`, and the Favorit
 back. Koin resolves 34 + 36 definitions with no `androidContext` wiring needed — the concern
 raised during the run turned out not to apply under `KoinApplication`.
 
+### Landed 2026-08-06 — step 9, second repo (`bookshelf`): findings 5–9
+
+**The second repo migrated end to end, and produced five new findings.** `bookshelf` is the
+root-level-feature shape nothing had exercised: two features at the repo root (`search/`,
+`favorites/`) plus one already-conforming `/create-feature`-built feature, shared `core/model` +
+`core/network`, and a real `search → favorites` **and** `bookdetail → favorites` cross-feature
+edge. 9 steps — 2 hoists, 1 extract, **2 relocates**, 3 migrates, report. All three features at
+**0 actionable findings**, strict `kmpilot_check --all` **0 errors 0 warnings** across 20 checks,
+android + iOS + desktop compile, and **the app runs on a device**: Open Library search returns
+results through the migrated `data.app` remote layer, favouriting round-trips through `:core:data`,
+the Favorites tab reads it back, and the detail screen renders through the shared DataSource.
+
+**Two of the five findings were runtime-only again** — one of them a crash that a green
+`assembleDebug`, a green strict `archTest` and a green iOS + desktop compile all passed. That is
+now twice in two repos. **Install and run the APK.**
+
+**Finding 5 — a refusal over a dirty tree left the rewrite behind.** `checkpoint` is skippable:
+nothing forces it, and going from `next` straight to editing is one command away. `refuse` guarded
+the no-checkpoint case by asking the *status* — `in-progress` errored, `pending` was assumed to
+mean nothing had been written — so a step rewritten while still `pending` recorded its refusal over
+modified source and left exactly the half-migrated feature the refusal exists to prevent, silently.
+Fixed by asking the **tree** as well as the ledger (`is_dirty(root)`). Found by walking into it: a
+`complete` was issued on a step that was never opened, and it was accepted.
+
+**Finding 6 — `XNavHost` was invisible to I4, and that suppressed the real check.** The nav-host
+fallback matched `\bNavHost\s*\(`, which **cannot** match `XNavHost(` — there is no word boundary
+between two word characters. But the host is far more likely to call a **wrapper** than `NavHost`
+itself: `XNavHost` is the design system's own, and it is what `/create-feature` and the template
+generate against. So an adopted project navigating through it was told it had **no NavHost at
+all** — a wrong advisory (finding 1's machinery working on a false premise), and the expensive half
+is not the message: with no nav host found, the real I4 never runs and a feature genuinely missing
+from the nav graph goes unreported. Fixed to `\w*NavHost\s*\(`; `NavHostController(` still does not
+match, because the `\(` has to follow `NavHost` immediately. On `bookshelf` this turned two wrong
+advisories into two real, fixable findings, and both features gained the nav extension they were
+missing.
+
+**Finding 7 — the dry run predicted an edit the real command never makes.** With no
+`managedFeatures` key, `promote` correctly does nothing, but `plan` computed its candidate list
+without asking that question and announced *"would promote: favorites, bookdetail, search"* — a dry
+run mispredicting the real thing, which is its one job. The same line also called an **adopted**
+repo *"a template project"*: a project whose features all sat outside `feature/` at adopt time has
+no key either. Both fixed — `plan` asks what `promote` asks, and the message states what is known
+(nothing is graded leniently) rather than guessing the repo's kind.
+
+**Finding 8 — `@Serializable` with no serialization plugin: built green, crashed on launch.** New
+check **S5**.
+
+```
+kotlinx.serialization.SerializationException: Serializer for class 'SearchRoute' is not found.
+```
+
+The annotation is only an annotation. Without the compiler plugin **on that module** no serializer
+is generated and nothing says so — the module compiles, `archTest` passes, every target links.
+This is the crash a migration is *most* likely to introduce, because Integration Point 4 hands each
+migrated feature a type-safe `@Serializable` nav route it did not have before, while the `plugins`
+block is inherited from whatever the module was before the rewrite. `favorites` and `bookdetail`
+happened to carry the plugin already; `search` did not, and nothing in the pipeline looked.
+
+Scoped to the `plugins { }` block on purpose: `implementation(libs.kotlinx.serialization.core)` is
+the runtime library, not the compiler plugin, and reading it as one reports the crash as fixed.
+That half is pinned by its own control (`control-serialization-lib-only`).
+
+**Finding 9 — a negative control that could not fail.** Discovery's `findings=` column is a
+**space-separated** list (`findings=I3×1 R11b×1 R5×4`), so the matrix's `findings=[^ ]*I4`
+assertions could never reach past the first token — including finding 1's own
+`advisory-no-navhost` reject, which had been passing for the wrong reason since it landed. Fixed to
+`[^=]*` (5 occurrences), which spans the list and stops at the next `key=` column. Same class as
+the six wrong-reason assertions step 8 caught: **only mutation testing finds these.**
+
+**Finding 2 extended — raising `jvmTarget` is half the fix on an Android module.** The migrated app
+failed with *"Inconsistent JVM targets between Java and Kotlin compile tasks: 11 and 21"*: AGP pins
+Java's `compileOptions.source/targetCompatibility` separately, and moving only
+`compilerOptions.jvmTarget` splits them. The `jvm-target-below-core` note now says to raise both.
+
+Verified: **8 mutations, each caught** — including the over-broad I4 regex, which needed a control
+that did not exist (`control-navhost-mention-only`: a file that *names* `NavHostController` without
+calling a nav host must not earn the role — the near-miss `find_first_containing`'s own docstring
+records). `migrate-matrix.sh` is **66 variants**; the five new ones each proven able to fail.
+`kmpilot_migrate_test.py` and `kmpilot_report_test.py` each gained an assertion for findings 5
+and 7. `kmpilot_check.py` is **20 checks**; KMPilot's own six features stay 0 errors 0 warnings.
+
+**Still open after this run** (none blocks; recorded rather than fixed):
+
+1. **Open item 5 confirmed, not fixed.** `MIGRATION-REPORT.md` printed *"8 done · … · 1
+   outstanding"* on a run that finished completely, while `status` said *9 done*. The writer counts
+   its own step as outstanding because the report is written before `verify report` runs.
+2. **A relocated feature's before-counts are lost.** The plan's work lists are empty for a
+   root-level feature — the checker only grades `feature/*`, so it is ungradable until its
+   `relocate` step lands (the `gradableNote` says exactly this). The report therefore prints
+   `? → 0` for those features and *"No rule findings were recorded for any feature in this
+   migration"* — precisely for the two features that needed the most work. The counts exist; they
+   are produced by the re-grade right after the relocate and are simply never captured.
+
+3. **61 of the 66 matrix variants have never been proven able to fail.** Finding 9 is the
+   reason this is written down as work rather than left as a green checkmark: a control that
+   cannot fail looks exactly like one that passes. `scripts/mutation_audit.py --coverage`
+   prints the list; closing it means registering a mutation per variant and watching each one
+   caught. This is the largest untested surface in the phase, and everything else leans on it.
+
+**Convergence:** not close. Two repos, nine findings. `bookshelf` is the first repo whose *shape*
+was new (root-level features), and it produced five.
+
 ## Project-scoped, not feature-scoped
 
 **Reversed 2026-08-04.** The first draft of this phase, and the `migrate-feature` entry it came
@@ -837,14 +952,15 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `scripts/kmpilot_report_test.py` | ✅ **new** — integrate-phase self-test (needs git) | stripped on install |
 | `scripts/kmpilot_discover_test.py` | ✅ **new** — discovery self-test | stripped on install |
 | `scripts/kmpilot_plan_test.py` | ✅ **new** — plan self-test | stripped on install |
-| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
+| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1); the nav-host fallback matches wrappers so `XNavHost` no longer suppresses I4 (finding 6); **new check S5** — a module declaring `@Serializable` must apply the serialization plugin (finding 8). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
 | `.claude/skills/_shared/patterns.md` | migration entry alongside create/modify | OVERRIDE |
 | `CLAUDE.md` | mandatory-skill table gains both commands | TIER1 (merged) |
 | `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715) | not delivered |
 | `ADOPTING.md` | same rename (:81); compatibility note | stripped on install |
 | `scripts/make-nonconforming-project.sh` | **new** — Stage B fixture: several features + shared code | stripped on install |
 | `scripts/make-android-target.sh` | **new** — Stage C Android fixture (Compose + Hilt + Retrofit) | stripped on install |
-| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (61 variants) | stripped on install |
+| `scripts/mutation_audit.py` | ✅ **new** — the mutation harness: every guard has to be watched failing before it counts. `--coverage` is the suite's honest status | stripped on install |
+| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (66 variants) | stripped on install |
 | `.claude/docs/_roadmap/PARKED.md` | migrate entry resolved; full-app rejection recorded as reversed | not delivered |
 
 Skills are OVERRIDE tier, so both commands reach every existing install on `./update.sh` with no
@@ -888,8 +1004,8 @@ commit only `.claude/`.
    `append_managed_features()` in `kmpilot_check.py` is append-only and idempotent; specs are
    named, not written — `/audit-spec` stays the one spec writer. Resume support was already the
    ledger: `finish` is idempotent and `verify report` is what says a run is actually closed.)*
-9. Run against `bookshelf-featuredir`, `bookshelf`, `Kickoff26`, and the projects you build by
-   hand. Transcript of each goes in the PR. ← **next**
+9. Run against `bookshelf-featuredir` ✅, `bookshelf` ✅, `Kickoff26` ✅ (refuses, correctly), and
+   the projects you build by hand ← **next**. Transcript of each goes in the PR.
 
 **Stage C** — only after Stage B is confirmed
 
@@ -924,7 +1040,15 @@ commit only `.claude/`.
       restores the pre-migration state exactly.
 - [ ] Interrupt mid-run and re-invoke: resumes at the next unmigrated feature, re-migrates nothing.
 - [ ] Confirmed on `bookshelf-featuredir`, `bookshelf`, `Kickoff26`, plus hand-built projects.
-- [ ] `migrate-matrix.sh` green, every variant proven able to fail.
+- [ ] `migrate-matrix.sh` green, every variant proven able to fail. **Do not tick this because
+      the matrix is green — green is what a decorative assertion also looks like.** Step 9
+      finding 9 found a negative control that could never fail and had been passing since the
+      day it landed; step 8 found six more of the same shape. The only proof is breaking the
+      code and watching the guard go red. `scripts/mutation_audit.py` does that and
+      `--coverage` prints the honest state: **as of 2026-08-06, 5 of 66 variants have a
+      registered mutation — 61 are unverified.** Closing this criterion means registering a
+      mutation per variant and every one of them being caught, which is real remaining work,
+      not a formality.
 - [ ] Phase 3 unpark decision recorded in `PARKED.md` and the README status table.
 
 **Stage C**
@@ -945,7 +1069,7 @@ commit only `.claude/`.
 # ── steps 1-4, landed: discovery writes nothing; the plan writes one file ───
 python3 scripts/kmpilot_discover_test.py                   # every classifier fires, ~1s
 python3 scripts/kmpilot_plan_test.py                       # every step kind, the gate, the ledger
-bash scripts/migrate-matrix.sh                             # 61 variants, 20 negative controls
+bash scripts/migrate-matrix.sh                             # 66 variants, 24 negative controls
 scripts/make-nonconforming-project.sh --force              # regenerate the fixture (offline)
 
 python3 .claude/skills/_shared/kmpilot_discover.py --root ~/KMPProjects/bookshelf-featuredir
