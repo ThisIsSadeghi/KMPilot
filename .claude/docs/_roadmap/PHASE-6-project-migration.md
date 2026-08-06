@@ -32,17 +32,16 @@ session has to read to keep going. Start it with exactly:
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Step 8 is uncommitted.** Steps 1–7 are committed (`76dc276` on top of `82a0601` on top of
-> `27ddc58`); step 8 is **staged but not committed** — the user drives commits. Confirm with
-> `git log --oneline -3` and `git status --short`. If the log shows step 8 committed, work has
-> happened since; trust the repo over this block and update it.
+> **Nothing is in flight.** Steps 1–8 are committed and the tree is clean as of 2026-08-06.
+> Confirm with `git log --oneline -2` — it should show `9169323` on top of `76dc276`. If it does
+> not, work has happened since; trust the repo over this block and update it.
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Three commits so far:
+Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Four commits:
 `27ddc58` *"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean
-phase to project migration"* (steps 5–7), `76dc276` (resume block). Step 8 is in the index.
-Do not commit or push unless the user says so.
+phase to project migration"* (steps 5–7), `76dc276` (resume block) and `9169323` *"Add the
+integrate phase to project migration"* (step 8). Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
