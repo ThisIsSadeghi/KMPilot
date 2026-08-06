@@ -23,32 +23,56 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ## ▶ Resume here (2026-08-06) — cold-start contract
 
-Steps 1–8 are **done and verified** — discovery, the plan, the **clean** phase and the
-**integrate** phase. All four phases of Stage B exist and are under test. What is left is
-step 9: **running it against real repos.** This block is written to be the only thing a fresh
+Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way
+and has produced four findings, all fixed**. This block is written to be the only thing a fresh
 session has to read to keep going. Start it with exactly:
 
 ```
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight.** Steps 1–8 are committed and the tree is clean as of 2026-08-06.
-> Confirm with `git log --oneline -2` — it should show `54f1183` on top of `9847587`. If it does
-> not, work has happened since; trust the repo over this block and update it.
+> **Nothing is in flight (2026-08-06).** Both repos are committed and clean. Confirm with
+> `git status --short` (empty) and `git log --oneline -5` — the tip should be a resume-block
+> update sitting on `244c004` *"Detect the build settings that break a migrated feature"*, the
+> last commit that changed a script. If anything sits above it, work has happened since; trust
+> the repo over this block and update it. Nothing has been pushed and no PR is open.
 >
-> **Step 9 has not started.** A previous session ran discovery (read-only) against `Kickoff26`
-> and `bookshelf-featuredir` and stopped there deliberately, to give the real-repo run a fresh
-> session. All four test repos are confirmed untouched: no `migration-plan.json`, no
-> `MIGRATION-REPORT.md`, no `kmpilot/migrate-*` branch in any of them.
+> **One repo is migrated: `bookshelf-featuredir`.** Branch `kmpilot/migrate-bookshelf`, 9
+> commits ahead of `master` (`71191d6` checkpoint → `2982203`), clean tree, all 6 steps done. Both features at 0 actionable findings and in
+> `managedFeatures`; strict check 0 errors; android + ios + desktop compile; **the app runs on a
+> device** — search returns Open Library results, favouriting persists through `:core:data` and
+> the Favorites tab reads it back. `git switch -` restores `master` exactly.
+>
+> **Four findings came out of that one repo**, each fixed, tested and recorded in its own
+> *Landed* section below. Read them before touching the scripts:
+>
+> 1. **Advisory findings** — an unfixable I4 held every feature short of done.
+> 2. **The JVM-target floor** — host JVM 11 vs core JVM 21; nothing compiled.
+> 3. **Compose resources never reaching the APK** — built green, crashed on launch.
+> 4. **`androidTarget { }` invisible to discovery** — found incidentally.
+>
+> **Findings 3 and 4 survived every static gate.** A green `assembleDebug`, a green strict
+> `archTest` and a green iOS + desktop compile all passed while the app crashed on launch.
+> **Install and run the APK** — building is not evidence.
+>
+> **Resume at:** `bookshelf` — 9 steps, 2 relocates, the root-level-feature path nothing has
+> exercised. Then the hand-built projects. `Kickoff26` is finished: it refuses as a template,
+> correctly, and writes nothing.
+>
+> **`bookshelf` starts clean:** no `migration-plan.json`, no `MIGRATION-REPORT.md`, no
+> `kmpilot/migrate-*` branch. Its uncommitted Phase-2 adoption output is its normal state — a
+> `begin` absorbs it into the checkpoint commit.
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Six commits:
-`27ddc58` *"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean
-phase to project migration"* (steps 5–7), `76dc276` (resume block), `9169323` *"Add the
-integrate phase to project migration"* (step 8), `9847587` (resume block) and `54f1183`
-*"Detect a module that holds several features"* (the shape sweep). Do not commit or push
-unless the user says so.
+Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Steps 1–8: `27ddc58`
+*"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean phase to
+project migration"* (steps 5–7), `9169323` *"Add the integrate phase to project migration"*
+(step 8), `54f1183` *"Detect a module that holds several features"* (the shape sweep), plus
+`76dc276` / `9847587` / `66d259f` (resume-block updates). Step 9 so far: `ed2e32a`
+*"Separate findings that are work from findings that are not"*, `244c004` *"Detect the build
+settings that break a migrated feature"*, plus one commit for this block (the record + the stopping
+rule). Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -67,7 +91,7 @@ unless the user says so.
 | `scripts/kmpilot_migrate_test.py` | clean-phase self-test — **needs git** |
 | `scripts/kmpilot_report_test.py` | integrate-phase self-test — **needs git** |
 | `scripts/make-nonconforming-project.sh` | the Stage B fixture generator |
-| `scripts/migrate-matrix.sh` | 49 variants, 18 negative controls |
+| `scripts/migrate-matrix.sh` | 61 variants, 20 negative controls |
 | `.claude/docs/_roadmap/{PHASE-6-project-migration,README}.md` | this file + the status table |
 
 **`.claude/skills` is generated.** Authored source is the gitignored `pipeline/src`; edit there,
@@ -80,7 +104,7 @@ python3 scripts/kmpilot_discover_test.py        # PASS, ~1s
 python3 scripts/kmpilot_plan_test.py            # PASS, ~2s
 python3 scripts/kmpilot_migrate_test.py         # PASS, ~5s (needs git)
 python3 scripts/kmpilot_report_test.py          # PASS, ~10s (needs git)
-bash scripts/migrate-matrix.sh                  # 57 passed · 0 failed (~2 min, builds the fixture)
+bash scripts/migrate-matrix.sh                  # 61 passed · 0 failed (~2 min, builds the fixture)
 python3 scripts/gen-surfaces.py --check         # .claude/ and pipeline/dist match the source
 python3 .claude/skills/_shared/kmpilot_check.py --all   # 0 errors 0 warnings
 claude plugin validate ./pipeline/dist --strict         # passed
@@ -162,6 +186,18 @@ Step 9 is the **real-repo run**, and it is the whole remaining risk:
 - A transcript per repo goes in the PR.
 - Then tick the Stage B exit criteria below and record the Phase 3 plugin unpark decision.
 
+**When step 9 is done, agreed 2026-08-06.** Not "when no bugs remain" — absence cannot be
+proven, and every new repo *shape* can surface a new class of failure. The criterion is
+**convergence**: a repo of a shape not run before produces **zero new findings**, and the
+Stage B exit criteria below are ticked. Every repo so far has produced findings (four from
+`bookshelf-featuredir` alone), so that point is not close. Each run ends by recording its
+findings here, so the count per repo is the visible measure of getting nearer.
+
+**Run the app, do not just build it.** Two of the four findings from the first repo survived
+a green `assembleDebug`, a green strict `archTest` and a green iOS + desktop compile, and were
+caught only by installing the APK and launching it. Static verification is deliberate and
+stays; it is not evidence the migration worked.
+
 **Do not skip the real-repo run.** Everything so far is proven against a generated fixture, and
 in Phase 2 **10 of the 14 bugs came from the real repos rather than the fixture**. Expect the same
 ratio here — and expect the first real failures to be in the rewrite passes, which are the only
@@ -200,6 +236,13 @@ run**; the matrix and both self-tests assert it, but check `git status` in them 
    `--set-tier hoist-core-model=common`.
 2. Whether either bookshelf inventory is missing anything the user knows is in those repos.
 3. Whether the migration orders are ones the user agrees with.
+
+5. **The report counts its own step as outstanding.** `finish` is promote → **write** →
+   verify → complete, so `MIGRATION-REPORT.md` is written while the `report` step is still
+   pending and prints *"5 done · 1 outstanding"* on a run that finishes completely. Cosmetic,
+   and the ordering is deliberate (`verify report` requires the file to exist first), so the
+   fix belongs in the writer — count the report step as done — not in the order. Found on the
+   first real run, 2026-08-06.
 
 4. **Refusal causes are free text, deliberately.** `--refuse` requires `--reason` but has no
    enumerated cause vocabulary (`android-api` / `unmappable` / `scope` / …). Inventing the taxonomy
@@ -450,6 +493,135 @@ mutation-tested and proven able to fail. Known cosmetic gap: `location` is still
 so anything not under `feature/` reads `location=root` — misleading for `features/x`, but the
 behaviour (relocate it) is right.
 
+### Landed 2026-08-06 — step 9, finding 1: advisory findings
+
+**The first real-repo run never started, because the read-only pass found a blocker first.**
+`bookshelf-featuredir` and `bookshelf` both navigate by hoisted state rather than a NavHost — a
+`when (selectedTab)` in `App.kt`. The checker reports I4 *"no NavHost in this project"* once per
+feature, and its own comment says why that is not a defect: *"An ADOPTED project may navigate with
+Voyager, Decompose, or plain state hoisting — no NavHost is a valid architecture there."*
+
+`verify_step` gated on `if not violations`. So every feature in both repos was uncompletable:
+`complete` refused → `--force` recorded a forced sign-off → `promote` re-ran the checker and refused
+→ `verify report` failed. **The Stage B exit criterion was unreachable on 2 of the 3 named test
+repos**, and the plan compounded it by routing the row into an `integration` rewrite pass — a work
+order for a finding with no fix.
+
+**Decided: "is this finished" is a question about work, not about rows.** A finding gains an
+optional `advisory` flag, and the flag is set by the *check that made the judgement*, never by rule
+id. Gating on severity instead was the obvious move and is wrong: four rules (**R13, S1, S2, S4**)
+emit `warning` for genuine rewrite work that is already routed to clusters, so an errors-only bar
+would let a feature complete with its `Screen.kt` allowlist violated.
+
+| Behaviour | Why |
+|---|---|
+| `violation(..., advisory=True)`; key omitted when false | additive to the report JSON, so the back-compat contract holds and every other row keeps its shape |
+| `check.actionable()` is the single place the rule is spelled | four consumers ask the question; four copies of the predicate is how they come to disagree |
+| counts mean work — discovery's `findingCount`, the plan's totals, the report's `after` | a feature reported as "5 findings" must be able to reach 0. `advisoryCount` carries the rest |
+| advisory rows carry **no rewrite pass** | a pass is a work order; one written against an unfixable finding sends an agent looking for an edit that does not exist |
+| they are still **printed** — `advisory=` in discovery, `advisory:` in `verify` | not counted as work is not the same as not shown; silently dropping the checker's advice is the opposite failure |
+| the report's `afterTotal` is actionable-only | otherwise a feature that migrated cleanly and was promoted prints `5 → 1`, a report contradicting its own features table |
+
+Also fixed, from the same read-only pass: **`next` printed an empty work list for a feature that
+had not been relocated yet.** The checker only grades `feature/*`, so a root-level feature is
+ungradable at plan time. The plan already recorded a `gradableNote` saying exactly that; `cmd_next`
+just never printed it, so the step read as "nothing to do" and would have been worked as finished
+and then refused by `verify` for findings nobody was shown.
+
+Verified: 7 mutations of the advisory logic, **each caught** — including the over-broad fix
+(`actionable()` returning `[]`), which is what proves real work still blocks. `migrate-matrix.sh` is
+**59 variants**, the two new ones (`advisory-no-navhost` and its negative control
+`control-advisory-real-i4`, where the NavHost exists and the feature is genuinely unregistered) each
+proven able to fail. On `bookshelf-featuredir` the unfixable `integration` pass is gone from both
+features and the work lists are 4 and 6, all clearable.
+
+### Landed 2026-08-06 — step 9, finding 2: the JVM-target floor
+
+**The first real migration ran end to end and then would not compile.** `bookshelf-featuredir`
+went through all six steps — two `hoist`s, one `extract`, both features to **0 actionable
+findings**, promoted, report written — and `./gradlew` failed on the first feature:
+
+```
+Cannot inline bytecode built with JVM target 21 into bytecode that is being built with
+JVM target 11. Specify proper '-jvm-target' option.
+```
+
+Every host module was `JVM_11`; every vendored `:core:*` module is `JVM_21`. KMPilot's core
+exposes **inline** functions — `setState`, the `Either`/`UiState` helpers — so the moment a
+migrated feature calls `setState` it has to inline JVM 21 bytecode into a JVM 11 module.
+The error names neither the core nor the migration, and **nothing in the pipeline could have
+caught it**: verification is static by design, and discovery inventoried platform targets
+(android/ios/desktop) but never the *bytecode* target. This is precisely the class of failure
+the phase predicted a fixture cannot produce.
+
+**Fixed by detection, not by rewriting build files.** Discovery reads each module's
+`jvmTarget`, takes the bar from the `core-kmpilot` modules, and notes any module below it
+(`jvm-target-below-core`) — so it surfaces in the plan, *before* the rewrite, with the reason
+and the fix. Raising the module is left to the user: a JVM level is a project-wide decision
+with consequences beyond migration.
+
+The bar is read off `:core:*` specifically, never off the highest module in the repo — a host
+on a *newer* JVM inlines from core perfectly well, and a repo-wide max would report the core
+itself as below the core.
+
+Verified: 4 mutations, each caught. Two of them exposed a hole in the test rather than the
+code — the fixture had no module above the core and none level with it, so the `core-kmpilot`
+restriction was untested and the "bar from any module" mutation survived twice. The fixture
+now spans all three positions (`:shared` at 24, `:feature:conforming` at 21, `:feature:messy`
+at 11) and the negative control asserts the note fires on **messy alone**.
+
+**Result on `bookshelf-featuredir`:** android `assembleDebug`, iOS (both features + the shell)
+and desktop (the three core modules) all compile; strict `kmpilot_check --all` is **0 errors**
+with both features in `managedFeatures`; `git switch -` restores `master` exactly, with
+`core/model` back and no leftovers.
+
+### Landed 2026-08-06 — step 9, findings 3 and 4: it built, installed, and crashed
+
+The migrated app compiled on all three targets, passed strict `archTest`, installed — and died
+on launch:
+
+```
+org.jetbrains.compose.resources.MissingResourceException: Missing resource with path:
+composeResources/com.example.bookshelf.search.generated.resources/values/strings.commonMain.cvr
+```
+
+**Finding 3 — compose resources never reached the APK.** Rule 12 gives every migrated feature a
+`composeResources/values/strings.xml`, and in this project's topology — the KMPilot app module is
+itself a KMP **library** (`shared`) behind a thin `androidApp` — resources only propagate when the
+module sets `androidResources.enable = true`. Without it `copyAndroidMainComposeResourcesToAndroidAssets`
+never gets an `outputDirectory` and contributes nothing. **The build succeeds and every static
+check passes**; only a launch finds it. `install.sh --adopt` already writes the flag into every
+`core/*` it vendors (install.sh:1275) — which is why the design system's strings were in the APK
+and the features' were not.
+
+Detected as `android-resources-not-enabled`, keyed on **what this project's own core does**, not on
+a universal rule: KMPilot's own template needs no flag (there `composeApp` *is* the application),
+so a note there would tell users to add something they do not need.
+
+Two mistakes of mine that this exposed, both now avoided by following the documented convention:
+forcing `compose.resources { packageOfResClass = … }` to a Kotlin package (which is what broke the
+copy task's wiring), when patterns.md already documents the derived
+`{PROJECT_NAMESPACE}.feature.{name}.generated.resources` — `:core:designsystem` has no such block
+and packages correctly.
+
+**Finding 4 — `androidTarget { }` was invisible to discovery.** Found incidentally: `_targets()`
+matched only `androidTarget(`, so any module using the block form — which is what you write the
+moment you configure `compilerOptions` or `androidResources` — was inventoried as having **no
+android target at all**. Now matches `androidTarget\s*[({]`.
+
+Verified: 4 mutations on the unit test, 2 on the matrix. The guard's project-level half ("does
+this repo's core enable it?") could not be killed by the fixture — an adopted project always has
+it on core — so it is pinned by the matrix control `control-android-resources-core-off`, which
+strips the flag from core and asserts silence; dropping the guard breaks it. `migrate-matrix.sh`
+is **61 variants**.
+
+**Confirmed on device.** `bookshelf-featuredir` installs and runs: Open Library search returns
+results through the migrated `data.app` remote layer (`Result` → `Either` → `UiState<List<Book>>`),
+covers load, `XText`/`XIconButton`/`XTextField` render, favouriting writes to the `:core:data`
+DataStore and the flow round-trips into search's `favoriteKeys`, and the Favorites tab reads it
+back. Koin resolves 34 + 36 definitions with no `androidContext` wiring needed — the concern
+raised during the run turned out not to apply under `KoinApplication`.
+
 ## Project-scoped, not feature-scoped
 
 **Reversed 2026-08-04.** The first draft of this phase, and the `migrate-feature` entry it came
@@ -665,14 +837,14 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `scripts/kmpilot_report_test.py` | ✅ **new** — integrate-phase self-test (needs git) | stripped on install |
 | `scripts/kmpilot_discover_test.py` | ✅ **new** — discovery self-test | stripped on install |
 | `scripts/kmpilot_plan_test.py` | ✅ **new** — plan self-test | stripped on install |
-| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving. *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
+| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
 | `.claude/skills/_shared/patterns.md` | migration entry alongside create/modify | OVERRIDE |
 | `CLAUDE.md` | mandatory-skill table gains both commands | TIER1 (merged) |
 | `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715) | not delivered |
 | `ADOPTING.md` | same rename (:81); compatibility note | stripped on install |
 | `scripts/make-nonconforming-project.sh` | **new** — Stage B fixture: several features + shared code | stripped on install |
 | `scripts/make-android-target.sh` | **new** — Stage C Android fixture (Compose + Hilt + Retrofit) | stripped on install |
-| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (49 variants) | stripped on install |
+| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (61 variants) | stripped on install |
 | `.claude/docs/_roadmap/PARKED.md` | migrate entry resolved; full-app rejection recorded as reversed | not delivered |
 
 Skills are OVERRIDE tier, so both commands reach every existing install on `./update.sh` with no
@@ -738,8 +910,10 @@ commit only `.claude/`.
 - [ ] The plan is written, shown, and confirmed before a single file is written. *(Machinery
       landed 2026-08-06 and is under test — plan, confirmation gate, lapse-on-change, resume
       ledger. Ticked once a real project has been migrated through it.)*
-- [ ] A whole real project migrates: every migratable feature at **0 checker findings** and in
-      `managedFeatures`, shared code in core, refusals listed with reasons.
+- [ ] A whole real project migrates: every migratable feature at **0 actionable checker findings**
+      and in `managedFeatures`, shared code in core, refusals listed with reasons. *(Reworded
+      2026-08-06: an advisory finding is reported but is not work — see step 9 finding 1. Without
+      the distinction this criterion is unreachable in any repo that navigates without a NavHost.)*
 - [ ] Compiles for android + ios + desktop in the target repo; strict `archTest` green.
 - [ ] ~~Pre-existing tests either still pass, or the report names each one that broke and why.~~
       **Amended 2026-08-05 — tests are out of scope** (see Decisions above). Instead:
@@ -771,7 +945,7 @@ commit only `.claude/`.
 # ── steps 1-4, landed: discovery writes nothing; the plan writes one file ───
 python3 scripts/kmpilot_discover_test.py                   # every classifier fires, ~1s
 python3 scripts/kmpilot_plan_test.py                       # every step kind, the gate, the ledger
-bash scripts/migrate-matrix.sh                             # 49 variants, 18 negative controls
+bash scripts/migrate-matrix.sh                             # 61 variants, 20 negative controls
 scripts/make-nonconforming-project.sh --force              # regenerate the fixture (offline)
 
 python3 .claude/skills/_shared/kmpilot_discover.py --root ~/KMPProjects/bookshelf-featuredir
