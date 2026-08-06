@@ -17,7 +17,7 @@ Trackable execution plan for the 2026-H2 packaging work. One file per phase, one
 | 3 | [Plugin packaging](PHASE-3-plugin-packaging.md) | `phase-3-plugin-packaging` | ⏸ Built, parked — publishes after Phase 6 Stage B |
 | 4 | [HTML design source](PHASE-4-html-design-source.md) | `phase-4-html-design-source` | ⬜ Not started |
 | 5 | [Adopt hardening](PHASE-5-adopt-hardening.md) | `phase-5-adopt-hardening` | ✅ Done ([#5](https://github.com/ThisIsSadeghi/KMPilot/pull/5)) |
-| 6 | [Project migration](PHASE-6-project-migration.md) | `phase-6-kmp-to-kmpilot`, then `phase-6-android-to-kmpilot` | ⬜ Not started — **next** |
+| 6 | [Project migration](PHASE-6-project-migration.md) | `phase-6-kmp-to-kmpilot`, then `phase-6-android-to-kmpilot` | 🔵 In progress — Stage B steps 1–4 (fixture, discovery, plan + resume ledger, per-feature work list) landed 2026-08-06; rewrite passes next |
 | — | [Parked](PARKED.md) | — | ⏸ Deliberately unscheduled |
 | — | [Adopt test backlog](ADOPT-TEST-BACKLOG.md) | — | 🔁 Living — Phase 5's checklist |
 
