@@ -34,6 +34,7 @@ KMPILOT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GEN="${SCRIPT_DIR}/make-nonconforming-project.sh"
 DISCOVER="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_discover.py"
 PLAN="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_plan.py"
+MIGRATE="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_migrate.py"
 FILTER="${1:-}"
 
 WORK="$(mktemp -d)"
@@ -108,6 +109,20 @@ plan() {
     local dir="$1"; shift
     OUT="$(python3 "$PLAN" --root "$dir" --compact "$@" 2>&1)"
     PLAN_EXIT=$?
+}
+
+# mig <dir> <args...> — run the clean phase against a variant. Sets OUT and MIG_EXIT.
+# Unlike discovery and the plan, this one commits: it owns the checkpoint branch.
+mig() {
+    local dir="$1"; shift
+    OUT="$(python3 "$MIGRATE" --root "$dir" "$@" 2>&1)"
+    MIG_EXIT=$?
+}
+
+# fingerprint <dir> <subpath> — content + existence of every file under a subtree, so
+# an added or deleted file changes it as loudly as an edited one.
+fingerprint() {
+    (cd "$1" && find "$2" -type f | sort | xargs cksum | cksum)
 }
 
 finish() {
@@ -650,6 +665,176 @@ if matches control-plan-non-target; then
     if [[ -f "$dir/.claude/docs/_project/migration-plan.json" ]]; then
         fail "a refused project got a plan file written into it"
     fi
+    finish
+fi
+
+if matches plan-refuse-rewrite; then
+    variant plan-refuse-rewrite "a blocker found once a pass opened the feature"; dir="$VDIR"
+    plan "$dir"
+    expect '^pass  migrate-notes ' "the feature carries a work list before it is refused"
+    plan "$dir" --confirm
+    plan "$dir" --mark migrate-notes=in-progress
+    plan "$dir" --refuse migrate-notes --reason "custom threading model, no KMP equivalent" \
+        --evidence Sync.kt:44
+    [[ $PLAN_EXIT -eq 0 ]] || fail "--refuse exited $PLAN_EXIT"
+    expect '^step .* migrate-notes  migrate  :feature:notes  refused' \
+        "the step is refused, not left in progress"
+    expect '^refusal-rewrite  migrate-notes .* prior=in-progress' \
+        "the refusal names the step and the status it held — what says a revert was owed"
+    reject '^pass  migrate-notes ' "a refused feature must carry no rewrite passes"
+    expect '^plan .* refused-rewrite=1' "the summary counts it separately from a discovery refusal"
+    # A refusal is a pass: the run continues rather than stopping for re-approval.
+    expect '^plan .* status=confirmed' "a refusal must not lapse confirmation"
+    # Features do not depend on features, so refusing one cannot stall another.
+    reject '^step .* blocked .*=[^ ]*migrate-notes' \
+        "refusing one feature must never block another"
+    plan "$dir"
+    expect '^step .* migrate-notes .* refused' \
+        "it survives regeneration — discovery cannot re-derive what it never saw"
+    finish
+fi
+
+if matches control-plan-refuse-withdrawn; then
+    variant control-plan-refuse-withdrawn \
+        "NEGATIVE CONTROL: --unrefuse gives the feature and its work list back"; dir="$VDIR"
+    plan "$dir"
+    plan "$dir" --refuse migrate-notes --reason "custom threading model, no KMP equivalent"
+    plan "$dir" --unrefuse migrate-notes
+    [[ $PLAN_EXIT -eq 0 ]] || fail "--unrefuse exited $PLAN_EXIT"
+    expect '^step .* migrate-notes  migrate  :feature:notes  pending' \
+        "the step comes back as pending — a recorded refusal has to be revocable"
+    expect '^pass  migrate-notes ' "and its work list comes back with it"
+    reject '^refusal-rewrite ' "a withdrawn refusal must leave nothing behind"
+    expect '^plan .* refused-rewrite=0' "and stops being counted"
+    plan "$dir" --unrefuse migrate-legacy
+    [[ $PLAN_EXIT -ne 0 ]] || \
+        fail "a discovery refusal is cleared by fixing the source, not withdrawn from the ledger"
+    finish
+fi
+
+if matches control-plan-refuse-not-progress; then
+    variant control-plan-refuse-not-progress \
+        "NEGATIVE CONTROL: a refusal cannot be smuggled in as progress"; dir="$VDIR"
+    plan "$dir"
+    # A remembered `refused` status would outlive the blocker being fixed and nothing
+    # could then clear it — a permanent wrong refusal, the failure that costs trust.
+    plan "$dir" --mark migrate-notes=refused
+    [[ $PLAN_EXIT -ne 0 ]] || fail "--mark ID=refused must be rejected"
+    expect '\-\-refuse migrate-notes' "and must point at the flag that does record one"
+    plan "$dir" --refuse migrate-notes
+    [[ $PLAN_EXIT -ne 0 ]] || fail "a refusal with no --reason must be rejected"
+    plan "$dir" --refuse migrate-legacy --reason x
+    [[ $PLAN_EXIT -ne 0 ]] || fail "refusing what discovery already refuses must be rejected"
+    plan "$dir" --refuse migrate-portable --reason x
+    [[ $PLAN_EXIT -ne 0 ]] || \
+        fail "refusing a blocked step must be rejected — no pass has opened it"
+    plan "$dir" --refuse migrate-nosuchthing --reason x
+    [[ $PLAN_EXIT -ne 0 ]] || fail "refusing a step that does not exist must be rejected"
+    plan "$dir"
+    reject '^refusal-rewrite ' "none of the rejected attempts may leave a record behind"
+    finish
+fi
+
+if matches plan-refuse-blocks; then
+    variant plan-refuse-blocks "shared code refused mid-rewrite blocks its consumers"; dir="$VDIR"
+    plan "$dir"
+    plan "$dir" --confirm
+    plan "$dir" --refuse hoist-core-netcall --reason "wire models come from an Android-only codegen"
+    expect '^step .* migrate-notes .* blocked .*=[^ ]*hoist-core-netcall' \
+        "a feature consuming the refused module is blocked, naming what blocks it"
+    # The plan was confirmed to do that work; quietly dropping it is the failure.
+    expect '^plannote  rewrite-refusal-blocks-work' \
+        "work the user approved that will now not run is called out"
+    plan "$dir" --unrefuse hoist-core-netcall
+    reject '^step .* migrate-notes .* blocked' "withdrawing it unblocks the consumers again"
+    reject '^plannote  rewrite-refusal-blocks-work' "and retracts the warning"
+    finish
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLEANS — the execution envelope: the branch, the checkpoints, the restore
+# ─────────────────────────────────────────────────────────────────────────────
+
+if matches clean-begin; then
+    variant clean-begin "a dirty tree is absorbed, not refused"; dir="$VDIR"
+    echo "work the user had not committed" > "$dir/MY-NOTES.txt"
+    base_branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+    plan "$dir"; plan "$dir" --confirm
+    mig "$dir" begin
+    [[ $MIG_EXIT -eq 0 ]] || fail "begin exited $MIG_EXIT"
+    expect 'migration begun on kmpilot/migrate-' "the run gets its own branch"
+    expect 'undo everything: git switch -' "and says how to undo the whole thing"
+    # `git switch -` restores the pre-migration *committed* state, so uncommitted work
+    # has to be asked for by name. Not saying so strands it.
+    expect 'the tree was dirty' "a dirty tree is called out, not silently swallowed"
+    expect 'git restore --source=' "and the way to get that work back is spelled out"
+    branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+    [[ "$branch" == kmpilot/migrate-* ]] || fail "the repo is on $branch, not a migration branch"
+    [[ -z "$(git -C "$dir" status --porcelain -- MY-NOTES.txt)" ]] || \
+        fail "the uncommitted file was left uncommitted — the checkpoint must absorb it"
+    git -C "$dir" switch - >/dev/null 2>&1
+    [[ "$(git -C "$dir" rev-parse --abbrev-ref HEAD)" == "$base_branch" ]] || \
+        fail "git switch - must land back on $base_branch"
+    finish
+fi
+
+if matches control-clean-gate; then
+    variant control-clean-gate "NEGATIVE CONTROL: a draft plan rewrites nothing"; dir="$VDIR"
+    plan "$dir"      # generated, deliberately NOT confirmed
+    before="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+    mig "$dir" begin
+    [[ $MIG_EXIT -ne 0 ]] || fail "begin on an unconfirmed plan must be refused"
+    expect 'not confirmed' "and must say the plan was never approved"
+    # A gate only `begin` enforced is walked around by starting at step two. Assert the
+    # *reason*, not just the exit code: an unbegun run refuses these commands anyway, so
+    # a bare exit-code check would pass with the gate deleted.
+    mig "$dir" checkpoint hoist-core-model
+    [[ $MIG_EXIT -ne 0 ]] || fail "a per-step command on a draft plan must be refused too"
+    expect 'not confirmed' "and refused for being unconfirmed, not merely for being unbegun"
+    [[ "$(git -C "$dir" rev-parse --abbrev-ref HEAD)" == "$before" ]] || \
+        fail "a refused run cut a branch anyway"
+    finish
+fi
+
+if matches clean-refuse-restores; then
+    variant clean-refuse-restores "a refusal leaves the subject exactly as found"; dir="$VDIR"
+    plan "$dir"; plan "$dir" --confirm; mig "$dir" begin
+    mig "$dir" checkpoint hoist-core-model
+    [[ $MIG_EXIT -eq 0 ]] || fail "checkpoint exited $MIG_EXIT: $OUT"
+    before="$(fingerprint "$dir" core/model)"
+    # A pass that modifies, adds AND deletes — where a naive restore quietly leaks.
+    kt="$(find "$dir/core/model" -name '*.kt' | head -1)"
+    echo "// mangled by a pass" >> "$kt"
+    echo "package added" > "$(dirname "$kt")/AddedByPass.kt"
+    rm "$dir/core/model/build.gradle.kts"
+    mig "$dir" refuse hoist-core-model --reason "annotation-processor generated" --evidence Note.kt:1
+    [[ $MIG_EXIT -eq 0 ]] || fail "refuse exited $MIG_EXIT: $OUT"
+    [[ "$(fingerprint "$dir" core/model)" == "$before" ]] || \
+        fail "the refused subject is not byte-identical to how it was found"
+    [[ -f "$dir/core/model/build.gradle.kts" ]] || fail "a deleted file was not restored"
+    # Nothing is rewritten out of history: the work in progress survives as a commit.
+    # A here-string, not a pipe: `grep -q` exits on the first match, git takes SIGPIPE,
+    # and `pipefail` would report the assertion as failed while it actually passed.
+    grep -q 'wip on hoist-core-model' <<<"$(git -C "$dir" log --oneline)" || \
+        fail "the work in progress must be kept, not discarded by a reset"
+    [[ -z "$(git -C "$dir" status --porcelain)" ]] || fail "a refusal must leave a clean tree"
+    plan "$dir" --status
+    expect '^step .* hoist-core-model .* refused' "the step ends up refused"
+    expect '^refusal-rewrite  hoist-core-model .* prior=in-progress' \
+        "recorded as found at rewrite, with the status that says a revert was owed"
+    finish
+fi
+
+if matches control-clean-order; then
+    variant control-clean-order "NEGATIVE CONTROL: a step cannot jump its dependencies"; dir="$VDIR"
+    plan "$dir"; plan "$dir" --confirm; mig "$dir" begin
+    # migrate-notes consumes shared code that has not reached :core:* yet. Rewriting it
+    # now would rewrite it against imports that are about to move under it.
+    mig "$dir" checkpoint migrate-notes
+    [[ $MIG_EXIT -ne 0 ]] || fail "opening a step with unfinished dependencies must be refused"
+    expect 'depends on' "and must name what it is waiting for"
+    mig "$dir" complete migrate-notes
+    [[ $MIG_EXIT -ne 0 ]] || fail "completing unfinished work must be refused"
     finish
 fi
 

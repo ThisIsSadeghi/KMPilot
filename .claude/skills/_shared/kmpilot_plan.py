@@ -39,6 +39,32 @@ current discovery pass and always win: a refused subject stays refused, a featur
 **Ledger** statuses (`in-progress`, `done`, `skipped`) are what the rewriting phases
 and the user wrote, and are preserved across regeneration — that is what makes a
 long run resumable, and what keeps a promoted feature from ever being migrated twice.
+
+## Refusing mid-rewrite
+
+Some blockers only surface once a rewrite pass opens the feature — discovery's
+classifiers read imports and structure, and cannot see everything. That refusal is
+recorded with `--refuse`, and it is deliberately **not** a `--mark` status:
+
+    python3 kmpilot_plan.py --root . --refuse migrate-legacy \\
+        --reason "custom DI graph with no Koin equivalent" --evidence Wiring.kt:44
+
+`--mark` still rejects `refused`. If it did not, the remembered status would outlive
+the blocker: `merge_progress` only applies a remembered status where the derived one
+is `pending`, so a `refused` written into progress could never be cleared by fixing
+the source — a permanent refusal nobody can lift, which is the wrong-refusal failure
+this phase exists to avoid. Discovery cannot re-derive it either; the premise is that
+its classifiers missed it.
+
+So it is remembered as an **input to derivation**, beside `decisions` — a declaration
+carrying a reason and evidence, which `build_steps` turns into a `refused` status the
+same way discovery's refusals are turned into one. `--unrefuse` withdraws it and the
+step returns to `pending`. The status stays derived; only the input is remembered.
+
+**Revert first, refuse second.** A refused feature must be left exactly as it was
+found. The mechanism is the per-feature checkpoint commit; `--refuse` records the
+status the step held so a refusal taken after work began is called out for exactly
+that reason.
 """
 
 from __future__ import annotations
@@ -63,7 +89,10 @@ REPO_ROOT = check.REPO_ROOT
 TIER_LABELS = discover_mod.TIER_LABELS
 
 PLAN_REL = Path(".claude/docs/_project/migration-plan.json")
-PLAN_SCHEMA_VERSION = 1
+# 2 adds `refusedAtRewrite` (mid-rewrite refusals) and an `at` field on every row of
+# `refusals`. Both are additive, and a schema-1 file on disk still merges — the
+# missing key reads as "none recorded" — so no minimum is enforced on load.
+PLAN_SCHEMA_VERSION = 2
 
 # `findingRows` — the per-feature work list with file:line — arrived in discovery
 # schema 2. A plan built from schema 1 would silently carry empty rewrite passes.
@@ -134,6 +163,11 @@ VALID_TIERS = ("common", "data", "designsystem", "split")
 MARKABLE = ("pending", "in-progress", "done", "skipped")
 DERIVED_STATUSES = ("refused", "blocked")
 
+# A rewrite-time refusal is only meaningful for work that has not finished. Refusing
+# a `done` step would claim a migration that already happened did not; refusing a
+# `blocked` one hides the dependency that is the actual problem.
+REFUSABLE_FROM = ("pending", "in-progress")
+
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -200,7 +234,51 @@ def passes_for(finding_rows: list[dict]) -> list[dict]:
     return out
 
 
-def build_steps(report: dict, decisions: dict) -> list[dict]:
+def apply_rewrite_refusals(steps: list[dict], recorded: dict) -> list[str]:
+    """Turn recorded mid-rewrite refusals into `refused` statuses. Returns the stale ids.
+
+    Runs before the blocked pass, so a refused `hoist` / `extract` / `relocate` blocks
+    its dependents through the machinery that already exists rather than a second one.
+
+    A record only applies where the derived status is `pending`. Discovery's own
+    refusal is more specific and wins; a `done` that came from `managedFeatures` says
+    the feature conforms *now*, which outranks a record of an older attempt. Those
+    records are reported as stale rather than silently obeyed or silently dropped.
+    """
+    stale: list[str] = []
+    by_id = {s["id"]: s for s in steps}
+    for step_id, entry in sorted(recorded.items()):
+        step = by_id.get(step_id)
+        if step is None or step["status"] != "pending":
+            stale.append(step_id)
+            continue
+        step["status"] = "refused"
+        step["refusedAt"] = "rewrite"
+        step["statusReason"] = entry["reason"]
+        step["evidence"] = list(entry.get("evidence") or [])
+        step["refusal"] = {
+            "reason": entry["reason"],
+            "at": entry.get("at"),
+            "by": entry.get("by", "rewrite"),
+            "priorStatus": entry.get("priorStatus", "pending"),
+        }
+        # A refusal is a pass, not a smaller job — same reasoning as a discovery
+        # refusal, and the reason a work list never survives one.
+        if step["kind"] == "migrate":
+            step["detail"]["passes"] = []
+            step["detail"]["passesNote"] = (
+                "no rewrite passes — this feature was refused mid-rewrite; its rule findings "
+                "stay in the checker report and are reported in MIGRATION-REPORT.md"
+            )
+    return stale
+
+
+def build_steps(
+    report: dict,
+    decisions: dict,
+    rewrite_refusals: dict | None = None,
+    stale_out: list[str] | None = None,
+) -> list[dict]:
     """One step per unit of work, unordered. Statuses here are the *derived* ones."""
     steps: list[dict] = []
     taken: set[str] = set()
@@ -248,6 +326,7 @@ def build_steps(report: dict, decisions: dict) -> list[dict]:
         if not row["hoistable"]:
             refusal = refusals.get(path, {})
             step["status"] = "refused"
+            step["refusedAt"] = "discovery"
             step["statusReason"] = refusal.get("reason", "shared code cannot be hoisted")
             step["evidence"] = refusal.get("evidence", [])
             step["detail"]["blocks"] = refusal.get("blocks", row["consumers"])
@@ -387,6 +466,7 @@ def build_steps(report: dict, decisions: dict) -> list[dict]:
             )
         elif refusal:
             step["status"] = "refused"
+            step["refusedAt"] = "discovery"
             step["statusReason"] = refusal["reason"]
             step["evidence"] = refusal.get("evidence", [])
             # A refusal is a pass, not a smaller job. Leaving the rewrite passes on a
@@ -401,6 +481,13 @@ def build_steps(report: dict, decisions: dict) -> list[dict]:
             step["status"] = "pending"
             step["statusReason"] = ""
         steps.append(step)
+
+    # ── refused once a rewrite pass opened it ───────────────────────────────
+    # Before the blocked pass on purpose: a hoist, extract or relocate refused here
+    # blocks its dependents through the machinery that already exists.
+    stale = apply_rewrite_refusals(steps, rewrite_refusals or {})
+    if stale_out is not None:
+        stale_out.extend(stale)
 
     # ── blocked: a step whose own dependency cannot be done ─────────────────
     refused_ids = {s["id"] for s in steps if s["status"] == "refused"}
@@ -564,6 +651,7 @@ def summarize(steps: list[dict]) -> dict:
         "featuresToMigrate": sum(
             1 for s in steps if s["kind"] == "migrate" and s["status"] in ("pending", "in-progress")
         ),
+        "refusedAtRewrite": sum(1 for s in steps if s.get("refusedAt") == "rewrite"),
         "hoists": sum(1 for s in steps if s["kind"] in ("hoist", "extract")),
         "findings": sum(s["detail"].get("findingCount", 0) for s in steps if s["kind"] == "migrate"),
         "needsDecision": sum(1 for s in steps if s["needsDecision"]),
@@ -584,12 +672,45 @@ def build_plan(root: Path, report: dict, previous: dict | None) -> dict:
     previous = previous or {}
     decisions = dict(previous.get("decisions") or {})
     progress = dict(previous.get("progress") or {})
+    rewrite_refusals = dict(previous.get("refusedAtRewrite") or {})
 
-    steps = order_steps(build_steps(report, decisions), report["graph"]["order"])
+    stale_refusals: list[str] = []
+    steps = order_steps(
+        build_steps(report, decisions, rewrite_refusals, stale_refusals),
+        report["graph"]["order"],
+    )
     merge_progress(steps, progress)
 
     plan_notes: list[dict] = []
     step_ids = [s["id"] for s in steps]
+    if stale_refusals:
+        plan_notes.append(
+            {
+                "id": "stale-rewrite-refusal",
+                "message": "a mid-rewrite refusal is recorded for "
+                f"{', '.join(stale_refusals)}, but the repo says otherwise now — the step is "
+                "refused by discovery, already done, or gone. The record is kept, not obeyed; "
+                "withdraw it with --unrefuse if it no longer applies.",
+            }
+        )
+    blocking_refusals = sorted(
+        {
+            b
+            for s in steps
+            if s["status"] == "blocked"
+            for b in s["blockedBy"]
+            if any(o["id"] == b and o.get("refusedAt") == "rewrite" for o in steps)
+        }
+    )
+    if blocking_refusals:
+        plan_notes.append(
+            {
+                "id": "rewrite-refusal-blocks-work",
+                "message": "a refusal taken mid-rewrite now blocks other steps "
+                f"({', '.join(blocking_refusals)}) — work the plan was confirmed to do will not "
+                "run. Review it with the user before continuing.",
+            }
+        )
     plan_status = previous.get("planStatus", "draft")
     confirmed_at = previous.get("confirmedAt")
     confirmed_steps = previous.get("confirmedSteps") or []
@@ -641,8 +762,29 @@ def build_plan(root: Path, report: dict, previous: dict | None) -> dict:
         },
         "decisions": decisions,
         "progress": progress,
+        "refusedAtRewrite": rewrite_refusals,
+        # Written by kmpilot_migrate.py, carried here untouched. The branch and the
+        # per-step checkpoints are what a refusal restores to, so losing them on a
+        # regeneration would strand a half-open step with no way back.
+        "migration": previous.get("migration"),
+        "checkpoints": dict(previous.get("checkpoints") or {}),
         "steps": steps,
-        "refusals": report["refusals"],
+        # Discovery's refusals plus the ones a rewrite pass hit, in one list, because
+        # MIGRATION-REPORT.md has to name every refusal regardless of when it was found.
+        "refusals": [dict(r, at="discovery") for r in report["refusals"]]
+        + [
+            {
+                "subject": s["subject"],
+                "kind": "shared" if s["kind"] in ("hoist", "extract") else "feature",
+                "at": "rewrite",
+                "step": s["id"],
+                "reason": s["statusReason"],
+                "evidence": s.get("evidence", []),
+                "priorStatus": s["refusal"]["priorStatus"],
+            }
+            for s in steps
+            if s.get("refusedAt") == "rewrite"
+        ],
         "notes": report["notes"],
         "planNotes": plan_notes,
         "next": next_step(steps),
@@ -667,6 +809,7 @@ def print_compact(plan: dict) -> None:
     s, p = plan["summary"], plan["project"]
     print(f"plan  {p['rootProjectName']}  status={plan['planStatus']}  steps={s['steps']}  "
           f"pending={s['pending']}  done={s['done']}  refused={s['refused']}  "
+          f"refused-rewrite={s.get('refusedAtRewrite', 0)}  "
           f"blocked={s['blocked']}  skipped={s['skipped']}  next={plan['next'] or '-'}")
     for step in plan["steps"]:
         target = step["detail"].get("target", "")
@@ -682,8 +825,15 @@ def print_compact(plan: dict) -> None:
         print(f"decision  {step_id}  tier={decision['tier']}  at={decision.get('at', '-')}")
     for note in plan["planNotes"]:
         print(f"plannote  {note['id']}  {note['message']}")
+    # Two line kinds, not one column added to one: a refusal found by reading the repo
+    # and a refusal taken with a pass already open are different facts, and the second
+    # is the one that needs its prior status read.
     for refusal in plan["refusals"]:
-        print(f"refusal  {refusal['subject']}  {refusal['kind']}  {refusal['reason']}")
+        if refusal.get("at") == "rewrite":
+            print(f"refusal-rewrite  {refusal['step']}  {refusal['subject']}  "
+                  f"prior={refusal['priorStatus']}  {refusal['reason']}")
+        else:
+            print(f"refusal  {refusal['subject']}  {refusal['kind']}  {refusal['reason']}")
 
 
 def print_grouped(plan: dict, color: Palette, path: Path | None) -> None:
@@ -742,9 +892,17 @@ def print_grouped(plan: dict, color: Palette, path: Path | None) -> None:
     if plan["refusals"]:
         print(f"\n{color.bold}REFUSALS ({len(plan['refusals'])}){color.off}")
         for refusal in plan["refusals"]:
-            print(f"  {color.error}{refusal['kind']:<8}{color.off}{color.bold}"
+            rewrite = refusal.get("at") == "rewrite"
+            tag = "rewrite" if rewrite else refusal["kind"]
+            print(f"  {color.error}{tag:<8}{color.off}{color.bold}"
                   f"{refusal['subject']}{color.off}")
             wrap(refusal["reason"], "    ")
+            if rewrite:
+                wrap(f"found once a pass had opened it ({refusal['step']}), not by discovery — "
+                     f"withdraw with --unrefuse {refusal['step']}", "    ")
+                if refusal["priorStatus"] == "in-progress":
+                    wrap("refused with the rewrite already under way: confirm the feature was "
+                         "reverted to its pre-pass state before this run continues.", "    ")
 
     grouped: dict[str, list[str]] = {}
     for note in plan["notes"]:
@@ -821,6 +979,28 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--note", default=None, help="note attached to the --mark entries written in this run"
+    )
+    parser.add_argument(
+        "--refuse",
+        action="append",
+        metavar="STEP_ID",
+        help="record a blocker a rewrite pass hit — needs --reason; repeatable. Revert the "
+        "feature to how it was found first: a refusal is a pass, not a half-migration",
+    )
+    parser.add_argument(
+        "--reason", default=None, help="why the --refuse steps in this run were refused (required)"
+    )
+    parser.add_argument(
+        "--evidence",
+        action="append",
+        metavar="FILE:LINE",
+        help="file:line backing the refusal; repeatable",
+    )
+    parser.add_argument(
+        "--unrefuse",
+        action="append",
+        metavar="STEP_ID",
+        help="withdraw a recorded mid-rewrite refusal; the step returns to pending. Repeatable",
     )
     parser.add_argument("--dry-run", action="store_true", help="generate and print, write nothing")
     args = parser.parse_args(argv)
@@ -901,12 +1081,84 @@ def main(argv: list[str]) -> int:
         previous["confirmedSteps"] = []
         previous["confirmedAt"] = None
 
+    # ── a refusal withdrawn ─────────────────────────────────────────────────
+    # First, so that refusing something in the same run is validated against the
+    # statuses the withdrawal produces rather than the ones it replaced.
+    if args.unrefuse:
+        previous = previous or {}
+        recorded = dict(previous.get("refusedAtRewrite") or {})
+        for step_id in args.unrefuse:
+            if step_id not in recorded:
+                print(f"error: no mid-rewrite refusal is recorded for {step_id!r} — "
+                      "a refusal that came from discovery is cleared by fixing the source, "
+                      "not withdrawn here.", file=sys.stderr)
+                return 2
+            del recorded[step_id]
+        previous["refusedAtRewrite"] = recorded
+
+    # ── a blocker a rewrite pass hit ────────────────────────────────────────
+    if args.refuse:
+        previous = previous or {}
+        recorded = dict(previous.get("refusedAtRewrite") or {})
+        progress = dict(previous.get("progress") or {})
+        by_id = {s["id"]: s for s in build_plan(root, report, previous)["steps"]}
+
+        reason = (args.reason or "").strip()
+        if not reason:
+            print("error: --refuse needs --reason — a refusal with no reason cannot be written "
+                  "into MIGRATION-REPORT.md and is indistinguishable from giving up.",
+                  file=sys.stderr)
+            return 2
+
+        for step_id in args.refuse:
+            step = by_id.get(step_id)
+            if step is None:
+                print(f"error: no step {step_id!r} in this plan", file=sys.stderr)
+                return 2
+            status = step["status"]
+            if status not in REFUSABLE_FROM:
+                hint = {
+                    "refused": (
+                        f"it is already refused mid-rewrite; `--unrefuse {step_id}` first if the "
+                        "reason has changed"
+                        if step.get("refusedAt") == "rewrite"
+                        else "it is already refused by discovery — the refusal and its evidence "
+                        "are in the plan already"
+                    ),
+                    "blocked": "it is blocked, so no pass has opened it; resolve the blocker "
+                    "instead — refusing here would hide the dependency that is the real problem",
+                    "done": "it is done; a finished migration is not refusable. "
+                    f"`--mark {step_id}=pending` first if it genuinely has to be redone",
+                    "skipped": "it is already out of scope",
+                }.get(status, f"its status is {status}")
+                print(f"error: cannot refuse {step_id} — {hint}.", file=sys.stderr)
+                return 2
+            recorded[step_id] = {
+                "reason": reason,
+                "evidence": list(args.evidence or []),
+                "at": now(),
+                "by": "rewrite",
+                "priorStatus": status,
+            }
+            # After the revert this step is not in progress any more, and a remembered
+            # `in-progress` would resurrect on --unrefuse claiming work that was undone.
+            progress.pop(step_id, None)
+
+        previous["refusedAtRewrite"] = recorded
+        previous["progress"] = progress
+
     plan = build_plan(root, report, previous)
 
     # ── progress ────────────────────────────────────────────────────────────
     if args.mark:
         by_id = {s["id"]: s for s in plan["steps"]}
         for step_id, status in parse_assignments(args.mark, "mark"):
+            if status == "refused":
+                print(f"error: `{step_id}=refused` is not a progress entry. A remembered refusal "
+                      "would outlive the blocker being fixed, and nothing could then clear it. "
+                      f"Record it as a declaration instead: --refuse {step_id} --reason '…'",
+                      file=sys.stderr)
+                return 2
             if status not in MARKABLE:
                 print(f"error: status {status!r} is not one of {', '.join(MARKABLE)}",
                       file=sys.stderr)

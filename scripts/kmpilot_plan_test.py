@@ -58,12 +58,23 @@ def run(root: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+# A run that exits non-zero prints no JSON. Handing back a shaped empty plan makes
+# that surface as failing assertions; handing back `{}` makes the next lookup raise,
+# which aborts the suite and hides every failure collected before it.
+EMPTY_PLAN: dict = {
+    "steps": [], "planNotes": [], "refusals": [], "notes": [],
+    "progress": {}, "decisions": {}, "refusedAtRewrite": {},
+    "planStatus": None, "confirmedSteps": [], "confirmedAt": None,
+    "next": None, "summary": {},
+}
+
+
 def plan_json(root: Path, *args: str) -> tuple[dict, subprocess.CompletedProcess]:
     proc = run(root, "--json-only", *args)
     try:
         return json.loads(proc.stdout), proc
     except json.JSONDecodeError:
-        return {}, proc
+        return json.loads(json.dumps(EMPTY_PLAN)), proc
 
 
 def main() -> int:
@@ -297,6 +308,186 @@ def main() -> int:
                "an unknown tier must be rejected")
         f.want(run(root, "--set-tier", "nosuchstep=common").returncode != 0,
                "a tier for a step that does not exist must be rejected")
+
+        # ── refusing once a rewrite pass has opened the feature ─────────────
+        # Every gradable feature in the base fixture is refused, blocked or already
+        # conforming, so the *ordinary* case — a healthy feature carrying a work list,
+        # ready to be migrated — has nothing to stand on. Without one here, "a refusal
+        # carries no work list" passes against a step that never had one.
+        fixture.w("settings.gradle.kts",
+                  (root / "settings.gradle.kts").read_text() + '\ninclude(":feature:plain")\n')
+        fixture.w("feature/plain/build.gradle.kts", """
+kotlin {
+    androidTarget()
+    iosArm64()
+    jvm("desktop")
+    sourceSets { commonMain.dependencies { implementation(project(":core:model")) } }
+}
+""")
+        # Material3 (R5) and no di/ (R8) — portable, hoistable deps, nothing refusable.
+        fixture.kt("feature/plain", "plain", "PlainScreen.kt", """
+package @PKG@.plain
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun PlainScreen() {
+    Text(text = "Hardcoded label")
+}
+""")
+        seeded, _ = plan_json(root)
+        seed = {s["id"]: s for s in seeded["steps"]}.get("migrate-plain", {})
+        f.want(
+            seed.get("status") == "pending" and seed.get("detail", {}).get("passes"),
+            "the refusal fixture must be a pending feature that carries a work list, or "
+            f"'a refusal carries no work list' proves nothing: {seed.get('status')}",
+        )
+
+        # The status stays *derived*; what is remembered is the declaration behind it.
+        # A remembered `refused` status would outlive the blocker being fixed, and
+        # nothing could then clear it — a permanent wrong refusal.
+        as_progress = run(root, "--mark", "migrate-plain=refused", "--compact")
+        f.want(
+            as_progress.returncode != 0 and "--refuse" in as_progress.stderr,
+            "`--mark ID=refused` must be rejected and must point at --refuse: "
+            f"exit {as_progress.returncode} {as_progress.stderr[:200]}",
+        )
+        f.want(
+            run(root, "--refuse", "migrate-plain", "--compact").returncode != 0,
+            "a refusal with no --reason must be rejected — it cannot be written into the report",
+        )
+
+        plan_json(root, "--confirm")
+        plan_json(root, "--mark", "migrate-plain=in-progress")
+        refused, _ = plan_json(
+            root,
+            "--refuse", "migrate-plain",
+            "--reason", "custom threading model with no KMP equivalent",
+            "--evidence", "Sync.kt:44",
+        )
+        step = {s["id"]: s for s in refused["steps"]}.get("migrate-plain", {})
+        f.want(step.get("status") == "refused",
+               f"--refuse left the step {step.get('status')}")
+        f.want(
+            step.get("statusSource") == "derived" and step.get("refusedAt") == "rewrite",
+            "a mid-rewrite refusal must still be a *derived* status, tagged as found at rewrite: "
+            f"{step.get('statusSource')} / {step.get('refusedAt')}",
+        )
+        # `.get` throughout: a step that was not refused carries neither key, and an
+        # exception here would abort the run and hide every assertion after it.
+        f.want(
+            step.get("detail", {}).get("passes") == [] and step.get("evidence") == ["Sync.kt:44"],
+            "a refusal is a pass, not a smaller job: no work list, and the evidence is kept",
+        )
+        f.want(
+            step.get("refusal", {}).get("priorStatus") == "in-progress",
+            "the status the step held must be recorded — it is what says a revert was owed",
+        )
+        f.want(
+            "migrate-plain" not in refused["progress"],
+            "the in-progress entry must be dropped: after the revert no work is under way, and "
+            "it would resurrect on --unrefuse claiming work that was undone",
+        )
+        f.want(
+            any(r.get("at") == "rewrite" and r["step"] == "migrate-plain"
+                for r in refused["refusals"]),
+            "a mid-rewrite refusal must join refusals[] — the report names every refusal",
+        )
+        f.want(
+            refused["planStatus"] == "confirmed",
+            "a refusal must not lapse confirmation — a refusal is a pass and the run continues",
+        )
+        f.want(
+            not any(s["status"] == "blocked" and "migrate-plain" in s["blockedBy"]
+                    for s in refused["steps"]),
+            "refusing one feature must never block another — features do not depend on features",
+        )
+        persisted, _ = plan_json(root)
+        f.want(
+            {s["id"]: s for s in persisted["steps"]}.get("migrate-plain", {}).get("status")
+            == "refused",
+            "a mid-rewrite refusal must survive regeneration — discovery cannot re-derive it",
+        )
+
+        for step_id, why in (
+            ("migrate-legacy", "already refused by discovery"),
+            ("migrate-cyclea", "blocked, so no pass has opened it"),
+            ("hoist-core-model", "done"),
+            ("migrate-plain", "already refused mid-rewrite"),
+        ):
+            proc = run(root, "--refuse", step_id, "--reason", "x", "--compact")
+            f.want(proc.returncode != 0, f"refusing {step_id} must be rejected — it is {why}")
+        f.want(
+            run(root, "--refuse", "migrate-nosuchthing", "--reason", "x").returncode != 0,
+            "refusing a step that does not exist must be rejected",
+        )
+
+        # A hoist refused mid-rewrite blocks its consumers through the machinery that
+        # already exists, and says so loudly: the plan was confirmed to do that work.
+        blocked_plan, _ = plan_json(
+            root, "--refuse", "hoist-core-netcall", "--reason", "no KMP port for the codegen"
+        )
+        f.want(
+            any(s["status"] == "blocked" and "hoist-core-netcall" in s["blockedBy"]
+                for s in blocked_plan["steps"]),
+            "a hoist refused mid-rewrite must block the features that consume it",
+        )
+        f.want(
+            any(n["id"] == "rewrite-refusal-blocks-work" for n in blocked_plan["planNotes"]),
+            f"blocking work the user approved must be called out: {blocked_plan['planNotes']}",
+        )
+
+        # ── a record the repo has since overruled is kept, not obeyed ───────
+        # Derived facts still win. A record naming a step discovery refuses on its own
+        # must not restate it as a rewrite refusal — that would relabel the reason and
+        # the evidence a user is relying on, and it is how a record for a step that is
+        # now `done` would half-migrate a promoted feature.
+        ledger = root / PLAN_REL
+        on_disk = json.loads(ledger.read_text())
+        on_disk["refusedAtRewrite"]["migrate-legacy"] = {
+            "reason": "a record the repo disagrees with",
+            "evidence": [], "at": "2026-01-01T00:00:00Z", "by": "rewrite", "priorStatus": "pending",
+        }
+        ledger.write_text(json.dumps(on_disk, indent=2))
+        stale_plan, _ = plan_json(root)
+        legacy = {s["id"]: s for s in stale_plan["steps"]}.get("migrate-legacy", {})
+        f.want(
+            legacy.get("refusedAt") == "discovery"
+            and "a record the repo disagrees with" not in legacy.get("statusReason", ""),
+            "a stale record must not overwrite a refusal discovery derives: "
+            f"{legacy.get('refusedAt')} / {legacy.get('statusReason', '')[:60]}",
+        )
+        f.want(
+            any(n["id"] == "stale-rewrite-refusal" for n in stale_plan["planNotes"]),
+            f"an overruled record must be reported, not silently dropped: "
+            f"{[n['id'] for n in stale_plan['planNotes']]}",
+        )
+        run(root, "--unrefuse", "migrate-legacy")
+
+        # ── withdrawing one: the step and its work list come back ───────────
+        f.want(
+            run(root, "--unrefuse", "migrate-legacy").returncode != 0,
+            "a discovery refusal is cleared by fixing the source, not withdrawn from the ledger",
+        )
+        withdrawn, _ = plan_json(
+            root, "--unrefuse", "migrate-plain", "--unrefuse", "hoist-core-netcall"
+        )
+        restored = {s["id"]: s for s in withdrawn["steps"]}.get("migrate-plain", {})
+        f.want(
+            restored.get("status") == "pending" and restored.get("refusedAt") is None,
+            f"--unrefuse must return the step to pending: {restored.get('status')}",
+        )
+        f.want(
+            withdrawn["refusedAtRewrite"] == {}
+            and not any(r.get("at") == "rewrite" for r in withdrawn["refusals"]),
+            "a withdrawn refusal must leave nothing behind — otherwise it is not revocable",
+        )
+        f.want(
+            not any(s["status"] == "blocked" and "hoist-core-netcall" in s["blockedBy"]
+                    for s in withdrawn["steps"]),
+            "withdrawing a hoist refusal must unblock its consumers",
+        )
 
         # ── --status and --dry-run write nothing ────────────────────────────
         quiet_before = file_snapshot(root)

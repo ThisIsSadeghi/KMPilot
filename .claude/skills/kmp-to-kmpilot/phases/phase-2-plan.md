@@ -22,6 +22,8 @@ Pass `--discovery` with the report from phase 1 so the plan is built from **the 
 | `--set-tier ID=TIER` | overrule a tier proposal (`common`\|`data`\|`designsystem`\|`split`); repeatable |
 | `--mark ID=STATUS` | record progress (`pending`\|`in-progress`\|`done`\|`skipped`); repeatable |
 | `--note TEXT` | note attached to the `--mark` entries written in this run |
+| `--refuse ID` | record a blocker a rewrite pass hit; needs `--reason`, takes `--evidence`; repeatable |
+| `--unrefuse ID` | withdraw a recorded mid-rewrite refusal; repeatable |
 | `--json-only` / `--compact` | machine-readable output |
 
 Exit codes: **0** normal, **1** the repo is not a migration target (or there is no plan to confirm), **2** an unusable target or a bad argument. A refused subject is a finding, not an error.
@@ -47,7 +49,7 @@ Every unit of work is one step with a stable id (`hoist-core-network`, `migrate-
 | `pending` | not started |
 | `in-progress` | a rewrite phase is working on it — where a resumed run picks up |
 | `done` | finished, **or** already conforming / in `managedFeatures`. Never re-migrated |
-| `refused` | Android-locked, no screen entry point, or unhoistable shared code |
+| `refused` | Android-locked, no screen entry point, unhoistable shared code — or a blocker a rewrite pass hit, recorded with `--refuse` |
 | `blocked` | its dependency is refused, or it sits in a dependency cycle |
 | `skipped` | the user took it out of scope |
 
@@ -95,6 +97,31 @@ Show the user, in this order:
 Then ask for confirmation with `AskUserQuestion`, offering: confirm as-is · change a tier · take a feature out of scope. Apply corrections with `--set-tier` / `--mark ID=skipped`, re-present, and only then `--confirm`.
 
 **Tier proposals stay proposals until the user settles them.** Discovery decides mechanical facts; where shared code lands is the judgment call this gate exists for. Never present a proposal as a settled verdict, and never confirm on the user's behalf.
+
+## Refusing once a pass has opened the feature
+
+Discovery classifies the three refusals it can see by reading the repo — Android-locked APIs, no screen entry point, unhoistable shared code. Some blockers only surface once a rewrite pass is inside the feature. That refusal is recorded with `--refuse`, and it is **not** a `--mark` status:
+
+```bash
+python3 .claude/skills/_shared/kmpilot_plan.py --root {repo} \
+    --refuse migrate-legacy --reason "custom DI graph with no Koin equivalent" \
+    --evidence Wiring.kt:44 --evidence Wiring.kt:91
+```
+
+**Revert first, refuse second.** A refused feature is left exactly as it was found — the per-feature checkpoint commit is the mechanism, and the recorded refusal keeps the status the step held (`priorStatus`) so a refusal taken with work already under way is called out for exactly that reason. Half a rewrite is worse than none: it is the failure the refusal exists to prevent.
+
+| Rule | Why |
+|---|---|
+| `--mark ID=refused` is **rejected** | a remembered `refused` would outlive the blocker being fixed — a permanent refusal nobody can lift. Remembered statuses only apply where the derived one is `pending`, so nothing could ever clear it |
+| a refusal is a **declaration**, not a status | `--refuse` records a reason and evidence beside the tier decisions; `build_steps` derives `refused` from it exactly as it does from discovery's own refusals. The status stays derived |
+| `--reason` is **required** | a refusal with no reason cannot go into `MIGRATION-REPORT.md`, and is indistinguishable from giving up |
+| only `pending` / `in-progress` steps can be refused | refusing a `done` step claims a migration that happened did not; refusing a `blocked` one hides the dependency that is the actual problem |
+| it does **not** lapse confirmation | a refusal is a pass — the run moves to the next feature rather than stopping for re-approval |
+| `--unrefuse ID` withdraws it | the step returns to `pending` with its work list. A refusal the user cannot lift is the wrong-refusal failure in slow motion |
+
+A refused `hoist`, `extract` or `relocate` blocks its dependents through the ordinary dependency machinery, and the plan says so with a `rewrite-refusal-blocks-work` note — work the user confirmed will now not run, which they get to hear about. Refusing a **feature** blocks nothing: features never depend on features.
+
+Discovery cannot re-derive a rewrite refusal, so the record is the only memory of it — but **derived facts still win**. A record naming a step that discovery now refuses on its own, or that reached `managedFeatures`, is reported as `stale-rewrite-refusal` and **not** obeyed. It is kept rather than dropped: silently discarding it would lose the reason.
 
 ## Resuming
 

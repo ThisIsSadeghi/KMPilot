@@ -1,7 +1,7 @@
 ---
 description: Bring an existing adopted KMP project under the pipeline — discover every feature and shared package, plan where each goes in what order, and confirm that plan before anything is rewritten. Invoke with /kmp-to-kmpilot.
 argument-hint: "[path-to-repo]"
-allowed-tools: Read, Glob, Grep, Bash(python3 *), Bash(git status *), Bash(git log *), Bash(ls *), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(python3 *), Bash(git status *), Bash(git log *), Bash(git diff *), Bash(ls *), Bash(touch:*), Bash(rm -f /tmp/.claude-kmpilot-skill-active), AskUserQuestion, Agent
 ---
 
 # KMP → KMPilot
@@ -14,16 +14,16 @@ Bring an **entire existing KMP project** under the pipeline: discover what is th
 
 ## What ships today
 
-**Discovery and planning.** The looking half is built and verified; the rewriting half is not.
-
 | Phase | Status |
 |---|---|
 | **1. Discover** — inventory, dependency order, tier proposals, refusals | ✅ **shipped** |
 | **2. Plan** — the written, confirmed migration plan + on-disk resume ledger | ✅ **shipped** |
-| 3. Clean — rewrite one feature at a time to zero checker findings | ⬜ not yet |
-| 4. Integrate — 4 integration points, specs, `managedFeatures`, report | ⬜ not yet |
+| **3. Clean** — checkpoint branch, rewrite one step at a time to zero checker findings, restore-and-refuse | ✅ **shipped** |
+| 4. Integrate — `MIGRATION-REPORT.md`, specs, `managedFeatures` promotion | ⬜ not yet |
 
-**This skill writes exactly one file — `.claude/docs/_project/migration-plan.json` — and no source file, ever.** It ends with a confirmed (or still-draft) plan. If the user asks it to start migrating, say plainly that the rewrite phases land in a later increment — do **not** improvise a migration by hand. Rewriting features without the checkpoint branch and the per-feature checker loop is exactly the unbounded single-pass rewrite the design forbids.
+**Phases 1 and 2 write no source file at all** — discovery writes nothing, the plan writes exactly one file. Source is only ever touched in phase 3, only from a **confirmed** plan, and only behind a checkpoint branch with a per-step commit.
+
+Phase 4 has not landed: when the steps are done, say plainly that the report, the specs and `managedFeatures` promotion are a later increment. Do **not** hand-write `managedFeatures` entries — promoting a feature the checker has not passed is how a migration starts lying about itself.
 
 ## Scope
 
@@ -43,12 +43,18 @@ An Android-only project is **not** in scope here; that is Stage C (`/android-to-
 ## Workflow
 
 ```
-[USER INVOKES] → Preflight → Discover → Present → Plan → Confirm → STOP (rewrite phases not yet shipped)
+[USER INVOKES] → Preflight → Discover → Present → Plan → Confirm ─┐
+                                                                  │
+   ┌──────────────────────────────────────────────────────────────┘
+   └→ Begin → ( next → checkpoint → rewrite → verify → complete )* → STOP (report is phase 4)
+                                        └── blocked? → refuse (restores, then records)
 ```
 
 See: @phases/phase-1-discover.md
 
 See: @phases/phase-2-plan.md
+
+See: @phases/phase-3-clean.md
 
 ---
 
@@ -111,13 +117,32 @@ python3 .claude/skills/_shared/kmpilot_plan.py --root {repo} --confirm
 
 **Never confirm on the user's behalf**, and never confirm a plan they have not seen in full. The confirmation is the gate the whole phase leans on: it is what makes a large rewrite something the user agreed to in advance.
 
-## Step 6: Stop
+## Step 6: Clean
 
-State plainly: the plan is on disk, it is confirmed (or still a draft), **no source file was touched**, and the rewrite phases have not shipped yet. Offer the useful next actions that **do** exist:
+Only from a **confirmed** plan. Cut the checkpoint branch, then work the steps one at a time in the planned order:
 
-- `python3 .claude/skills/_shared/kmpilot_plan.py --root {repo} --status` — the plan and its progress
-- `python3 .claude/skills/_shared/kmpilot_check.py --all --baseline` — the full rule-by-rule work list
-- `/modify-feature` — fix one feature by hand today, with the pipeline's own workflow
-- `/review-feature` — review a feature against the rules
+```bash
+python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} begin
+python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} next
+python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} checkpoint {step}
+#   … run the step's rewrite passes, one cluster at a time, delegating each to the
+#     agent the plan names: data-layer, ui-layer, integrator …
+python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} complete {step}
+```
 
-Do not offer to start the migration.
+Feature source is protected by the `protect-feature-files.sh` hook, so before editing anything under `feature/` run `touch /tmp/.claude-kmpilot-skill-active`, and `rm -f /tmp/.claude-kmpilot-skill-active` when the run ends or exits early.
+
+**One step at a time, in the order `next` gives.** Never batch steps, never pick one by eye, and never let this become a single sweeping pass over the repo — that is the failure every earlier phase was built to prevent. When a pass hits a blocker, `refuse {step} --reason "…"`: it restores the subject to its checkpoint and records the refusal in one action. A refusal is a pass; move to the next step.
+
+Full loop, the cluster→agent map and the resume rules: @phases/phase-3-clean.md
+
+## Step 7: Stop
+
+State plainly what happened: which steps are done, which were refused and why, that the work is on the `kmpilot/migrate-*` branch, and that **`git switch -` undoes all of it**. If the tree was dirty at `begin`, repeat the `git restore --source={ref} -- .` line — that work is inside the checkpoint commit, not on the base branch.
+
+Then say what has **not** happened: `MIGRATION-REPORT.md`, per-feature specs and `managedFeatures` promotion are phase 4 and have not shipped. Useful next actions that do exist:
+
+- `./gradlew assembleDebug` and `./gradlew archTest` — this phase verifies statically and compiles nothing
+- `python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} status` — progress and checkpoints
+- `/test-feature` — pre-existing tests are out of scope for migration; regenerate deliberately
+- `/review-feature` — review a migrated feature against the rules
