@@ -228,15 +228,24 @@ def verify_step(root: Path, step: dict, plan: dict | None = None) -> tuple[bool,
         if not (root / "feature" / feature).is_dir():
             return False, [f"feature/{feature}/ does not exist — the relocate step has not run"]
         violations, _ = check.run(root, [feature])
-        if not violations:
-            return True, [f"feature/{feature}: 0 checker findings"]
-        lines = [f"feature/{feature}: {len(violations)} finding(s) remain"]
-        lines += [
-            f"  {v['rule']:<6} {v['file']}:{v['line']}  {v['message']}" for v in violations[:20]
+        # The bar is the work, not the row count. An advisory finding has no fix, so
+        # holding the step until it clears is a step that can never complete — and the
+        # forced completion that follows is what promotion then refuses, leaving the run
+        # unable to close. They are still printed: silently ignoring the checker's own
+        # advice is the opposite failure.
+        work = check.actionable(violations)
+        advice = [
+            f"  {v['rule']:<6} {v['file']}:{v['line']}  advisory: {v['message']}"
+            for v in violations
+            if v.get("advisory")
         ]
-        if len(violations) > 20:
-            lines.append(f"  … and {len(violations) - 20} more")
-        return False, lines
+        if not work:
+            return True, [f"feature/{feature}: 0 actionable findings"] + advice
+        lines = [f"feature/{feature}: {len(work)} finding(s) remain"]
+        lines += [f"  {v['rule']:<6} {v['file']}:{v['line']}  {v['message']}" for v in work[:20]]
+        if len(work) > 20:
+            lines.append(f"  … and {len(work) - 20} more")
+        return False, lines + advice
 
     if kind == "relocate":
         src, dst = step["detail"]["from"], step["detail"]["to"]
@@ -348,6 +357,13 @@ def cmd_next(root: Path, plan: dict, args, color: Palette) -> int:
     print(f"{color.bold}{step['id']}{color.off}  {step['kind']}  {step['subject']}  "
           f"{color.dim}{step['status']}{color.off}")
     print(f"  {step['title']}")
+    # A feature that has not reached feature/ yet was ungradable when the plan was
+    # built, so its work list is empty — and an empty work list reads as "nothing to
+    # do" rather than "not known yet". The plan already records why; printing it here
+    # is what stops the step being opened, worked as if finished, and then refused by
+    # `verify` for findings nobody was shown.
+    if step["detail"].get("gradableNote"):
+        print(f"  {color.warning}{step['detail']['gradableNote']}{color.off}")
     for rewrite in step["detail"].get("passes", []):
         print(f"  pass {rewrite['cluster']:<14} agent={rewrite['agent'] or 'unrouted':<11} "
               f"{','.join(rewrite['rules'])} ×{rewrite['findingCount']}")

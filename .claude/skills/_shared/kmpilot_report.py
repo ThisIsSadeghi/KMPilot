@@ -205,9 +205,14 @@ def assess(root: Path, plan: dict) -> dict:
 
     for row in features:
         rows = after.get(row["name"], [])
-        row["after"] = dict(Counter(v["rule"] for v in rows))
-        row["afterTotal"] = len(rows)
-        row["afterRows"] = rows[:20]
+        # Actionable only, matching `beforeTotal` and the bar `verify_step` promotes on.
+        # Counting advisory rows here would print `5 → 1` for a feature that migrated
+        # cleanly and was promoted — a report contradicting its own features table.
+        work = check.actionable(rows)
+        row["after"] = dict(Counter(v["rule"] for v in work))
+        row["afterTotal"] = len(work)
+        row["afterRows"] = work[:20]
+        row["afterAdvisory"] = [v for v in rows if v.get("advisory")][:20]
         step = next(s for s in plan["steps"] if s["id"] == row["step"])
         if row["kind"] in ("migrated", "already-conforming"):
             ok, lines = migrate_mod.verify_step(root, step, plan)

@@ -396,8 +396,8 @@ class Source:
                 yield idx + 1, m
 
 
-def violation(feature, rule, severity, file, line, message) -> dict:
-    return {
+def violation(feature, rule, severity, file, line, message, advisory=False) -> dict:
+    row = {
         "feature": feature,
         "rule": rule,
         "severity": severity,
@@ -405,6 +405,21 @@ def violation(feature, rule, severity, file, line, message) -> dict:
         "line": line,
         "message": message,
     }
+    if advisory:
+        # Reported for visibility, but not work: a finding with no fix available in this
+        # repo, because the thing it describes is a legitimate choice rather than a
+        # defect. Consumers that decide "is this finished" — the migration's
+        # `verify_step`, its promotion, its rewrite passes — must skip these, or they
+        # hold a feature at a bar nothing can clear. Advisory rows are warnings by
+        # construction, so the build never failed on one; the key is omitted entirely
+        # when false, keeping the row shape unchanged for every other finding.
+        row["advisory"] = True
+    return row
+
+
+def actionable(violations: list[dict]) -> list[dict]:
+    """The findings that represent work. The one place the advisory rule is spelled."""
+    return [v for v in violations if not v.get("advisory")]
 
 
 def read(path: Path) -> str:
@@ -856,11 +871,16 @@ def check_integration(feature, sources, ctx) -> list[dict]:
         # hoisting — no NavHost is a valid architecture there, not a violation, and
         # failing the build over it would punish the host for its own design.
         if ctx.get("install_mode") == "adopt":
+            # Advisory, not work: there is no edit to this feature that clears it. The
+            # subject is the project's navigation, the same row is emitted once per
+            # feature, and the answer may well be "correct as is". A migration that
+            # treated it as work would hold every feature in the repo short of done.
             out.append(
                 violation(
                     feature, "I4", "warning", ctx["app_module"], 0,
                     "no NavHost in this project — check the feature is reachable from "
                     "whatever navigation it does use",
+                    advisory=True,
                 )
             )
         else:

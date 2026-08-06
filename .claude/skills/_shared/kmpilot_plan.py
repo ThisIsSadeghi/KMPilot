@@ -204,9 +204,17 @@ def unique(base: str, taken: set[str]) -> str:
 
 
 def passes_for(finding_rows: list[dict]) -> list[dict]:
-    """Group a feature's checker findings into the rewrite passes that fix them."""
+    """Group a feature's checker findings into the rewrite passes that fix them.
+
+    Advisory rows carry no pass. A pass is a work order handed to an agent, and one
+    written against a finding with no available fix sends that agent looking for an
+    edit that does not exist — then holds the step short of done when it fails to
+    find it.
+    """
     grouped: dict[str, list[dict]] = {}
     for row in finding_rows:
+        if row.get("advisory"):
+            continue
         grouped.setdefault(RULE_CLUSTER.get(row["rule"], "other"), []).append(row)
 
     ordered = [name for name, *_ in CLUSTERS if name in grouped]

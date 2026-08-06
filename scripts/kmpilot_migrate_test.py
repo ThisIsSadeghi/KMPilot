@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from kmpilot_discover_test import Fixture  # noqa: E402
+from kmpilot_discover_test import PKG, Fixture  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATE = REPO / ".claude/skills/_shared/kmpilot_migrate.py"
@@ -342,6 +342,64 @@ def main() -> int:  # noqa: C901 — a linear script; splitting it would hide th
             "MY-NOTES.txt" in git(root, "show", "--name-only",
                                   migration.get("checkpointRef", "HEAD")),
             "and the user's uncommitted work must still be recoverable from the checkpoint",
+        )
+
+    # ── advisory findings are reported, but they are not work ───────────────
+    # The real-repo shape this comes from: an adopted project that navigates by
+    # hoisted state instead of a NavHost. I4 then reports "no NavHost in this
+    # project" once per feature — the checker's own comment calls that a valid
+    # architecture rather than a violation, and no edit to the feature clears it.
+    # Counting it as work made every feature in the repo uncompletable: `complete`
+    # refused, `--force` recorded a forced sign-off, promotion re-ran the checker
+    # and refused, and the run could not close. A separate fixture because deleting
+    # the NavHost is exactly the mutation the suite above must not see.
+    with tempfile.TemporaryDirectory() as tmp:
+        fixture = Fixture(Path(tmp))
+        fixture.build()
+        root = fixture.root
+        (root / f"shared/src/commonMain/kotlin/{PKG}/app/BaseAppNavHost.kt").unlink()
+        init_git(root)
+        plan_cli(root)
+        plan_cli(root, "--confirm")
+        mig(root, "begin")
+
+        clean = mig(root, "verify", "migrate-conforming")
+        f.want(
+            clean.returncode == 0,
+            "a feature whose only remaining finding is advisory must verify — otherwise it "
+            f"can never be completed or promoted: exit {clean.returncode} {clean.stdout[:300]}",
+        )
+        f.want(
+            "0 actionable findings" in clean.stdout,
+            f"verify must count work, not rows: {clean.stdout[:300]}",
+        )
+        f.want(
+            "advisory:" in clean.stdout and "I4" in clean.stdout,
+            "an advisory finding must still be printed — silently dropping the checker's own "
+            f"advice is the opposite failure: {clean.stdout[:300]}",
+        )
+
+        # NEGATIVE CONTROL. The cost of getting this wrong is a feature signed off with
+        # real work outstanding, so a rule that stops blocking must be proven still to
+        # block where it should. `messy` has genuine findings and the same advisory row.
+        messy = mig(root, "verify", "migrate-messy")
+        f.want(
+            messy.returncode != 0 and "finding(s) remain" in messy.stdout,
+            "advisory must not swallow real findings — a feature with actual work must still "
+            f"fail verify: exit {messy.returncode} {messy.stdout[:300]}",
+        )
+
+        # And the plan must not hand an agent a work order it cannot fill.
+        steps = {s["id"]: s for s in ledger(root)["steps"]}
+        passes = steps["migrate-messy"]["detail"]["passes"]
+        f.want(
+            all("I4" not in p["rules"] for p in passes),
+            f"an advisory finding must carry no rewrite pass: {[p['rules'] for p in passes]}",
+        )
+        f.want(
+            steps["migrate-messy"]["detail"]["findingCount"] == sum(p["findingCount"] for p in passes),
+            "the step's count must equal the work its passes cover — a total nothing can "
+            "reach is a target that reads as failure forever",
         )
 
     if f:
