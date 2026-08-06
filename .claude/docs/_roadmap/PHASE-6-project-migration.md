@@ -31,22 +31,15 @@ exactly:
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 8
 ```
 
-> ⚠️ **Steps 5–7 exist only in the working tree.** Nothing since `27ddc58` is committed, so a
-> lost worktree loses three steps of work. Committing is the user's call and always has been —
-> if that has not happened yet, the first thing to raise is:
->
-> ```bash
-> git add -A && git commit    # subject e.g. "Add the clean phase to project migration"
-> ```
->
-> Verify with `git log --oneline -1` before assuming this block's "uncommitted" wording is
-> still true. If steps 5–7 *are* committed, update this warning rather than leaving it to rot.
+> **Nothing is in flight.** Steps 1–7 are committed and the tree is clean as of 2026-08-06.
+> Confirm with `git log --oneline -2` — it should show `82a0601` on top of `27ddc58`. If it does
+> not, work has happened since; trust the repo over this block and update it.
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`. Steps 1–4 landed as commit `27ddc58` (*"Discover and plan a
-project migration"*). **Steps 5–7 are uncommitted — do not commit or push unless the user says
-so.**
+Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Two commits:
+`27ddc58` *"Discover and plan a project migration"* (steps 1–4) and `82a0601` *"Add the clean
+phase to project migration"* (steps 5–7). Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -165,8 +158,8 @@ ratio here.
 
 ### 5b. First moves, in order
 
-1. `git log --oneline -3` and `git status --short` — establish whether steps 5–7 are still
-   uncommitted, and correct the warning above if they are not.
+1. `git log --oneline -3` and `git status --short` — confirm the two commits above and a clean
+   tree. Anything else means work happened after this block was written; trust the repo.
 2. Run the seven baseline commands in §2. **Do not change anything until they are green** — if
    one fails, that is the finding, and it outranks step 8.
 3. Read `phase-3-clean.md` (the loop step 8 hangs off) and the *Landed 2026-08-06 — steps 6–7*
