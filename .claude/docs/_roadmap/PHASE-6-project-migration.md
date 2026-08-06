@@ -33,15 +33,22 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
 > **Nothing is in flight.** Steps 1–8 are committed and the tree is clean as of 2026-08-06.
-> Confirm with `git log --oneline -2` — it should show `9169323` on top of `76dc276`. If it does
+> Confirm with `git log --oneline -2` — it should show `54f1183` on top of `9847587`. If it does
 > not, work has happened since; trust the repo over this block and update it.
+>
+> **Step 9 has not started.** A previous session ran discovery (read-only) against `Kickoff26`
+> and `bookshelf-featuredir` and stopped there deliberately, to give the real-repo run a fresh
+> session. All four test repos are confirmed untouched: no `migration-plan.json`, no
+> `MIGRATION-REPORT.md`, no `kmpilot/migrate-*` branch in any of them.
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Four commits:
+Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Six commits:
 `27ddc58` *"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean
-phase to project migration"* (steps 5–7), `76dc276` (resume block) and `9169323` *"Add the
-integrate phase to project migration"* (step 8). Do not commit or push unless the user says so.
+phase to project migration"* (steps 5–7), `76dc276` (resume block), `9169323` *"Add the
+integrate phase to project migration"* (step 8), `9847587` (resume block) and `54f1183`
+*"Detect a module that holds several features"* (the shape sweep). Do not commit or push
+unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -73,7 +80,7 @@ python3 scripts/kmpilot_discover_test.py        # PASS, ~1s
 python3 scripts/kmpilot_plan_test.py            # PASS, ~2s
 python3 scripts/kmpilot_migrate_test.py         # PASS, ~5s (needs git)
 python3 scripts/kmpilot_report_test.py          # PASS, ~10s (needs git)
-bash scripts/migrate-matrix.sh                  # 49 passed · 0 failed (~2 min, builds the fixture)
+bash scripts/migrate-matrix.sh                  # 57 passed · 0 failed (~2 min, builds the fixture)
 python3 scripts/gen-surfaces.py --check         # .claude/ and pipeline/dist match the source
 python3 .claude/skills/_shared/kmpilot_check.py --all   # 0 errors 0 warnings
 claude plugin validate ./pipeline/dist --strict         # passed
@@ -408,6 +415,40 @@ force a completion → promote → report → close), with **14 mutations, each 
 able to fail. `append_managed_features` smoke-tested against `bookshelf-featuredir`'s real
 manifest: append-only, idempotent, rest of the file byte-identical, result re-parsed before
 saving.
+
+### Landed 2026-08-06 — the shape sweep (pre-step-9)
+
+**Decided: layout is not a supported list, it is an invariant.** *"The shape should not matter —
+the goal is to support all working projects."* So the matrix stopped asserting "these N layouts
+work" and started asserting one claim on every shape variant: **a working KMP project is either
+migrated or refused with a reason** — never crashed on, never silently dropped, never handed a
+plan nobody can complete. `invariant()` in `migrate-matrix.sh` checks five things per shape:
+discovery exits 0 and writes nothing; no included module is missing from the inventory; every
+feature has a migrate step *or* a refusal; every refusal carries a reason; the plan always ends
+in a report step. A new shape variant inherits all five.
+
+Five layouts needed **no product change** — `features/{name}`, features nested under the app
+module, `modules/feature-{name}`, shared code in `common/`/`libs/` instead of `core/*`, and every
+module flat at the repo root. `classify_kind` already falls back to *declares a top-level
+`@Composable`* for anything outside `feature/` and `core/`, and anything not under `feature/`
+already earns a `relocate` step.
+
+One shape produced nonsense: a module holding several unrelated screens was inventoried as **one**
+feature with **one** migrate step, so the plan asked for a rewrite that cannot exist — `Screen.kt`'s
+allowlist admits one screen, and a feature has one DI module, one nav extension, one package.
+`phase-3-clean.md` already named "a feature that turns out to be three" as a reason to refuse
+mid-rewrite; nothing detected it while the plan was still a plan. `screen_roots()` now reports it
+as a **`multi-feature-module` note — a note, not a refusal**: the heuristic can be wrong, and the
+cost of being wrong has to stay one line of output rather than a wrongly refused feature. Two
+limits keep it quiet: only `*Screen`-named **top-level** composables count (not the dozens under
+`components/`), and an ancestor package collapses into its descendant (a secondary screen in a
+subpackage is one feature). Verified against KMPilot's own six features: **zero findings**,
+including `:feature:profile` with the documented secondary-screen pattern.
+
+`migrate-matrix.sh` is **57 variants**; the classifier and its negative control were each
+mutation-tested and proven able to fail. Known cosmetic gap: `location` is still a two-value label,
+so anything not under `feature/` reads `location=root` — misleading for `features/x`, but the
+behaviour (relocate it) is right.
 
 ## Project-scoped, not feature-scoped
 
