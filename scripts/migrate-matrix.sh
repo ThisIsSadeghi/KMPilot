@@ -1191,6 +1191,96 @@ if matches shape-flat-root; then
     finish
 fi
 
+# ── advisory findings: reported, but not work ───────────────────────────────
+#
+# From the real repos: an adopted project may navigate by hoisted state instead of a
+# NavHost, which the checker itself calls a valid architecture rather than a defect.
+# It still reports I4 once per feature, and no edit to a feature clears it. Counted as
+# work, it made every feature in such a repo uncompletable — `complete` refused,
+# promotion refused the forced sign-off that followed, and the run could not close.
+
+if matches advisory-no-navhost; then
+    variant advisory-no-navhost "adopted project that navigates by hoisted state, not a NavHost"; dir="$VDIR"
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/App.kt" <<'EOF'
+package com.acme.notes
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+
+@Composable
+fun App() {
+    MaterialTheme { }
+}
+EOF
+    # Commit the reshape, as move_module does: invariant #1 asserts *discovery* wrote
+    # nothing, and it reads `git status` — an uncommitted setup edit would read as one.
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: navigate without a NavHost" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^feature  :feature:portable .*advisory=' \
+        "an advisory finding stays visible — not counted as work is not the same as not shown"
+    reject '^feature  :feature:portable .*findings=[^ ]*I4' \
+        "an unfixable I4 must not be counted as work — that total can never be reached"
+    plan "$dir"
+    reject '^pass .*rules=[^ ]*I4' \
+        "an advisory finding must carry no rewrite pass — no agent can fix a NavHost that is a design choice"
+    finish
+fi
+
+if matches control-advisory-real-i4; then
+    variant control-advisory-real-i4 "NEGATIVE CONTROL: the project HAS a NavHost, feature unregistered"; dir="$VDIR"
+    # The base ships a NavHost registering only the notes feature. Every other feature
+    # is genuinely unregistered — a real I4 with a real fix. If `advisory` is keying on
+    # the rule rather than on the checker's judgement, this stops being reported as work
+    # and a feature ships unreachable.
+    invariant "$dir"
+    reject '^feature  :feature:portable .*advisory=' \
+        "a fixable I4 must never be marked advisory"
+    plan "$dir"
+    expect '^pass .*rules=[^ ]*I4' \
+        "a real I4 must still be routed to the integrator as work"
+    finish
+fi
+
+# ── compose resources have to reach the APK ─────────────────────────────────
+#
+# From the first real run: the migrated app built, passed every static check, and died
+# on launch with MissingResourceException. Rule 12 gives every migrated feature a
+# composeResources/values/strings.xml, and in a project whose app module is itself a KMP
+# library the resources only propagate when the module sets `androidResources.enable`.
+# `install.sh --adopt` writes it into every core/* it vendors, so the core is the signal.
+
+if matches android-resources-missing; then
+    variant android-resources-missing "adopted core enables androidResources, a feature does not"; dir="$VDIR"
+    invariant "$dir"
+    expect '^note  android-resources-not-enabled  :feature:portable' \
+        "a feature without the flag must be named — the failure is runtime-only, so nothing else catches it"
+    finish
+fi
+
+if matches control-android-resources-core-off; then
+    variant control-android-resources-core-off "NEGATIVE CONTROL: core does not enable it either"; dir="$VDIR"
+    # A repo where the core never sets the flag does not need it — that is KMPilot's own
+    # topology, where the app module IS the application. Telling those features to add it
+    # is the wrong-warning failure, so the note is keyed on what this project's core does.
+    for f in "$dir"/core/*/build.gradle.kts; do
+        [ -f "$f" ] || continue
+        python3 - "$f" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace("androidResources.enable = true", ""))
+PY
+    done
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: core does not enable androidResources" >/dev/null 2>&1
+    invariant "$dir"
+    reject '^note  android-resources-not-enabled' \
+        "with the core not enabling it either, no feature needs the flag"
+    finish
+fi
+
 echo
 echo "${DIM}────────────────────────────────────────────────────────────${OFF}"
 echo "${BOLD}$PASSES passed · $FAILURES failed${OFF}"

@@ -121,12 +121,18 @@ koin-core = { module = "io.insert-koin:koin-core", version = "4.0.0" }
         # The app module: KMP, all three targets, holds initKoin + the NavHost, and
         # imports every feature's screen. Those imports are Integration Point 4 and
         # must NOT be reported as shared-code-inside-a-feature.
+        # Deliberately ABOVE the vendored core's JVM 21. A host on a newer JVM inlines
+        # from core perfectly well, so it must draw no note — and it is what proves the
+        # bar is read off `:core:*` rather than off whatever module happens to be
+        # highest, which would report the core itself as below the core.
         self.w("shared/build.gradle.kts", """
 kotlin {
     androidTarget()
     iosArm64()
     iosSimulatorArm64()
-    jvm("desktop")
+    jvm("desktop") {
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_24) }
+    }
 
     sourceSets {
         commonMain.dependencies {
@@ -165,12 +171,18 @@ fun BaseAppNavHost(modifier: Modifier) {
 
     # ── the vendored :core:* adopt writes — must classify as core-kmpilot ────
     def _vendored_core(self) -> None:
+        # JVM 21, like the real vendored core — the bar a host module has to clear to
+        # inline `setState` and the Either/UiState helpers out of these modules.
         for module in ("common", "data", "designsystem"):
             self.w(f"core/{module}/build.gradle.kts", """
 kotlin {
-    androidTarget()
+    androidTarget {
+        androidResources.enable = true
+    }
     iosArm64 { }
-    jvm("desktop")
+    jvm("desktop") {
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_21) }
+    }
     sourceSets { commonMain.dependencies { implementation(kmpilotLibs.koin.core) } }
 }
 """)
@@ -266,11 +278,19 @@ class Toaster(private val context: Context)
 
     # ── conforming feature: the false-positive guard ─────────────────────────
     def _conforming_feature(self) -> None:
+        # Exactly the core's JVM 21: equal is fine, and it is the case that separates
+        # "below the vendored core" from "below the highest module in the repo".
+        # NEGATIVE CONTROL for android-resources-not-enabled: this one already has the
+        # flag, so it must draw no note even though the core sets it too.
         self.w("feature/conforming/build.gradle.kts", """
 kotlin {
-    androidTarget()
+    androidTarget {
+        androidResources.enable = true
+    }
     iosArm64()
-    jvm("desktop")
+    jvm("desktop") {
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_21) }
+    }
     sourceSets { commonMain.dependencies { implementation(kmpilotLibs.koin.core) } }
 }
 """)
@@ -382,9 +402,13 @@ actual class PlatformInfo(private val context: Context)
     def _messy_feature(self) -> None:
         # No `jvm("desktop")` → the missing-desktop-target note. Reads the HOST
         # catalog while :core:* reads kmpilotLibs → the catalog-split note.
+        # JVM 11 against a JVM 21 core → the jvm-target-below-core note. Real: it is
+        # what `bookshelf-featuredir` shipped, and it broke the build on `setState`.
         self.w("feature/messy/build.gradle.kts", """
 kotlin {
-    androidTarget()
+    androidTarget {
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_11) }
+    }
     iosArm64()
     sourceSets {
         commonMain.dependencies {
@@ -707,6 +731,8 @@ def main() -> int:
             "cross-feature-dependency": ":feature:messy → :feature:conforming",
             "catalog-split": None,
             "dependency-cycle": None,
+            "jvm-target-below-core": ":feature:messy",
+            "android-resources-not-enabled": ":feature:messy",
         }.items():
             want(note_id in notes, f"note {note_id} did not fire")
             if subject is not None:
@@ -717,6 +743,21 @@ def main() -> int:
         want(
             "not-adopted" not in notes and "template-mode" not in notes,
             f"an adopted repo got the wrong role note: {sorted(notes)}",
+        )
+        # NEGATIVE CONTROL. Every other module either names no jvmTarget or matches the
+        # core, and a note on those would tell a user to "fix" a module that compiles —
+        # the wrong-warning version of the wrong-refusal failure.
+        want(
+            notes.get("jvm-target-below-core") == [":feature:messy"],
+            "jvm-target-below-core must fire only where the target is genuinely lower: "
+            f"{notes.get('jvm-target-below-core')}",
+        )
+        # NEGATIVE CONTROL. `conforming` already sets the flag and must draw no note; a
+        # note telling a user to add what is already there is the wrong-warning failure.
+        want(
+            ":feature:conforming" not in notes.get("android-resources-not-enabled", []),
+            "android-resources-not-enabled fired on a module that already has the flag: "
+            f"{notes.get('android-resources-not-enabled')}",
         )
         cycle_note = notes.get("dependency-cycle", [""])[0]
         want(

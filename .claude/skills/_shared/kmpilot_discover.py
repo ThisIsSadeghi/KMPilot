@@ -127,6 +127,9 @@ ANDROID_LOCKED = [(i, re.compile(rf"^{p}"), r) for i, p, r in ANDROID_LOCKED]
 # what it is for. `main` is the AGP-only convention and is treated the same way, but
 # only for a module that has no Kotlin Multiplatform plugin (see `Module.is_kmp`).
 ANDROID_SOURCESET = re.compile(r"android", re.IGNORECASE)
+# `androidResources.enable = true` in the AGP KMP library DSL — what makes a module
+# actually publish its compose resources into the Android assets of whatever consumes it.
+ANDROID_RESOURCES = re.compile(r"androidResources\s*\.\s*enable\s*=\s*true")
 
 # ─── Tier proposal ───────────────────────────────────────────────────────────
 
@@ -302,6 +305,7 @@ class Module:
             p in self.plugins for p in ("kotlinMultiplatform", "androidMultiplatformLibrary")
         )
         self.targets = self._targets()
+        self.jvm_target = self._jvm_target()
         self.project_deps = sorted(set(re.findall(r"project\s*\(\s*\"(:[^\"]+)\"", self.gradle)))
         self.catalogs = sorted(
             {c for c in catalogs if re.search(rf"\b{re.escape(c)}\.", self.gradle)}
@@ -311,6 +315,26 @@ class Module:
         self.packages: set[str] = set()
         self.root_package = ""
         self.kind = "other"
+
+    def _jvm_target(self) -> int | None:
+        """The module's JVM bytecode target, or None when it does not name one.
+
+        Read because KMPilot's `:core:*` modules are JVM 21 and expose **inline**
+        functions (`setState`, the `Either`/`UiState` helpers). A host module pinned
+        lower cannot inline them: the build fails with "Cannot inline bytecode built
+        with JVM target 21 into bytecode that is being built with JVM target 11",
+        which names neither the module that caused it nor the migration that surfaced
+        it. Nothing else in the pipeline would catch it — verification is static.
+        """
+        found = [
+            int(m.group(1))
+            for m in re.finditer(r"JvmTarget\.JVM_(\d+)", self.gradle)
+        ]
+        found += [
+            int(m.group(1))
+            for m in re.finditer(r"""jvmTarget\s*(?:=|\.set\s*\(\s*)\s*["'](\d+)["']""", self.gradle)
+        ]
+        return max(found) if found else None
 
     def _plugins(self) -> set[str]:
         found: set[str] = set()
@@ -330,7 +354,11 @@ class Module:
     def _targets(self) -> list[str]:
         t: set[str] = set()
         if (
-            re.search(r"\bandroidTarget\s*\(", self.gradle)
+            # Both call forms: `androidTarget()` and the block form `androidTarget { … }`,
+            # which is what a module writes as soon as it configures compilerOptions or
+            # androidResources. Matching only the paren form inventories such a module as
+            # having no android target at all.
+            re.search(r"\bandroidTarget\s*[({]", self.gradle)
             or re.search(r"^\s*android(Library)?\s*\{", self.gradle, re.MULTILINE)
             or "androidApplication" in self.plugins
             or "androidLibrary" in self.plugins
@@ -793,6 +821,24 @@ def discover(root: Path) -> dict:
     refusals: list[dict] = []
     role = project_role(root, install_mode)
 
+    # The bar every host module has to clear to be able to inline from `:core:*`.
+    core_jvm_targets = [
+        m.jvm_target
+        for m in modules.values()
+        if m.kind == "core-kmpilot" and m.jvm_target is not None
+    ]
+    core_jvm_target = max(core_jvm_targets) if core_jvm_targets else None
+
+    # Whether the vendored core turns Android resource processing on. It is needed when
+    # the app module is itself a KMP library behind a thin android app, because compose
+    # resources have to propagate feature → app-library → application; where it is not
+    # needed, adopt does not write it. So the core modules in *this* repo are the signal
+    # for what a migrated feature has to do here — not a rule that holds everywhere.
+    core_android_resources = any(
+        m.kind == "core-kmpilot" and ANDROID_RESOURCES.search(m.gradle)
+        for m in modules.values()
+    )
+
     if role == "template":
         notes.append(
             {
@@ -869,8 +915,15 @@ def discover(root: Path) -> dict:
                 "inManagedFeatures": in_managed,
                 "androidEvidence": blocking,
                 "notableDeps": module.notable_deps(catalog_map),
-                "findings": dict(Counter(v["rule"] for v in rows)),
-                "findingCount": len(rows),
+                # Counts mean *work*, everywhere: a feature reported as "5 findings" and
+                # then migrated to 0 must be able to reach 0. Advisory rows have no fix,
+                # so counting them would make every total in the plan and the report an
+                # unreachable target. They are carried in `findingRows` and counted
+                # separately instead of dropped — losing them would hide the checker's
+                # own advice from the reader.
+                "findings": dict(Counter(v["rule"] for v in check.actionable(rows))),
+                "findingCount": len(check.actionable(rows)),
+                "advisoryCount": len(rows) - len(check.actionable(rows)),
                 # The per-feature work list, straight from the checker. The plan phase
                 # clusters these into rewrite passes; keeping only the counts would
                 # have forced it to run the checker a second time to find out where.
@@ -881,6 +934,7 @@ def discover(root: Path) -> dict:
                         "file": v["file"],
                         "line": v["line"],
                         "message": v["message"],
+                        **({"advisory": True} if v.get("advisory") else {}),
                     }
                     for v in rows
                 ],
@@ -919,6 +973,32 @@ def discover(root: Path) -> dict:
                     "subject": path,
                     "message": "no desktop/jvm target — KMPilot's rules assume android + ios + "
                     "desktop, and every expect needs a desktop actual or the build breaks.",
+                }
+            )
+        if core_android_resources and "android" in module.targets \
+                and not ANDROID_RESOURCES.search(module.gradle):
+            notes.append(
+                {
+                    "id": "android-resources-not-enabled",
+                    "subject": path,
+                    "message": "no `androidResources.enable = true`, but this project's "
+                    ":core:* modules set it — so compose resources reach the APK there and "
+                    "will not from here. Rule 12 gives every migrated feature a "
+                    "composeResources/values/strings.xml, and without the flag it is "
+                    "silently absent at runtime: the build succeeds and the app dies on the "
+                    "first stringResource() with MissingResourceException.",
+                }
+            )
+        if core_jvm_target is not None and module.jvm_target is not None \
+                and module.jvm_target < core_jvm_target:
+            notes.append(
+                {
+                    "id": "jvm-target-below-core",
+                    "subject": path,
+                    "message": f"compiles to JVM {module.jvm_target} but KMPilot's :core:* "
+                    f"modules are JVM {core_jvm_target}, and they expose inline functions "
+                    "(setState, the Either/UiState helpers). Raise this module to "
+                    f"JVM {core_jvm_target} or the migrated feature will not compile.",
                 }
             )
         cross = [c for c in consumes if modules.get(c) and modules[c].kind == "feature"]
@@ -1131,8 +1211,12 @@ def print_compact(report: dict) -> None:
     for f in report["features"]:
         rules = " ".join(f"{r}×{n}" for r, n in sorted(f["findings"].items())) or "-"
         entry = f"{f['entryPoint']['file']}:{f['entryPoint']['line']}" if f["entryPoint"] else "none"
+        # Advisory rows are excluded from `findings` because they are not work, but they
+        # are still the checker talking — printed under their own label so dropping them
+        # from the count does not also drop them from view.
+        advisory = f"  advisory={f['advisoryCount']}" if f.get("advisoryCount") else ""
         print(f"feature  {f['gradlePath']}  {f['verdict']}  location={f['location']}  "
-              f"entry={entry}  findings={rules}")
+              f"entry={entry}  findings={rules}{advisory}")
     for s in report["shared"]:
         print(f"shared  {s['gradlePath']}  -> {s['proposedTarget']}  "
               f"consumers={len(s['consumers'])}  hoistable={str(s['hoistable']).lower()}")
