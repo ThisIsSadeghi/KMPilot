@@ -35,6 +35,7 @@ GEN="${SCRIPT_DIR}/make-nonconforming-project.sh"
 DISCOVER="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_discover.py"
 PLAN="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_plan.py"
 MIGRATE="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_migrate.py"
+INTEGRATE="${KMPILOT_ROOT}/.claude/skills/_shared/kmpilot_report.py"
 FILTER="${1:-}"
 
 WORK="$(mktemp -d)"
@@ -117,6 +118,14 @@ mig() {
     local dir="$1"; shift
     OUT="$(python3 "$MIGRATE" --root "$dir" "$@" 2>&1)"
     MIG_EXIT=$?
+}
+
+# rep <dir> <args...> — run the integrate phase against a variant. Sets OUT and REP_EXIT.
+# It writes two things and only two: MIGRATION-REPORT.md and .kmpilot.json.
+rep() {
+    local dir="$1"; shift
+    OUT="$(python3 "$INTEGRATE" --root "$dir" "$@" 2>&1)"
+    REP_EXIT=$?
 }
 
 # fingerprint <dir> <subpath> — content + existence of every file under a subtree, so
@@ -844,6 +853,95 @@ if matches control-plan-managed; then
     plan "$dir"
     expect '^step .* migrate-portable .* done .* source=derived' \
         "a feature in managedFeatures is done, derived from the manifest, not from the ledger"
+    finish
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INTEGRATES — the closing phase: promotion, the report, and the gate on both
+# ─────────────────────────────────────────────────────────────────────────────
+
+if matches control-integrate-gate; then
+    variant control-integrate-gate \
+        "NEGATIVE CONTROL: nothing is promoted or reported before the run exists"; dir="$VDIR"
+    plan "$dir"      # generated, deliberately NOT confirmed
+    rep "$dir" promote
+    [[ $REP_EXIT -ne 0 ]] || fail "promoting against an unconfirmed plan must be refused"
+    expect 'not confirmed' "and must say the plan was never approved"
+    plan "$dir" --confirm
+    # Confirmed but never begun: there is no run to report on, and promoting here would
+    # mark features as migrated by a migration that has not happened.
+    rep "$dir" write
+    [[ $REP_EXIT -ne 0 ]] || fail "reporting on a migration that never began must be refused"
+    expect 'has not begun' "and must say why"
+    [[ ! -f "$dir/MIGRATION-REPORT.md" ]] || fail "a refused integrate wrote a report anyway"
+    grep -q '"managedFeatures": \[\]' "$dir/.kmpilot.json" || \
+        fail "a refused integrate promoted something anyway"
+    # The read-only preview stays answerable — knowing what promotion *would* do is a
+    # fair question to ask before approving the plan that leads to it.
+    rep "$dir" plan --compact
+    [[ $REP_EXIT -eq 0 ]] || fail "the dry run must work without a begun run: $OUT"
+    expect '^integrate .* report=no' "and must report that nothing has been written"
+    [[ ! -f "$dir/MIGRATION-REPORT.md" ]] || fail "the dry run wrote a report"
+    finish
+fi
+
+if matches integrate-forced-not-promoted; then
+    variant integrate-forced-not-promoted \
+        "a forced completion is not promoted — promotion re-runs the checker"; dir="$VDIR"
+    plan "$dir"; plan "$dir" --confirm; mig "$dir" begin
+    # `done` is a claim. Promotion is where the claim is checked, because a promoted
+    # feature is graded strictly from then on: promoting one the checker never passed
+    # turns the next archTest red on work the migration called finished.
+    mig "$dir" checkpoint migrate-notes
+    mig "$dir" complete migrate-notes --force
+    [[ $MIG_EXIT -eq 0 ]] || fail "--force must be able to record a sign-off: $OUT"
+    rep "$dir" promote
+    [[ $REP_EXIT -eq 0 ]] || fail "promote exited $REP_EXIT: $OUT"
+    expect 'not promoted .*notes' "a forced completion must be refused promotion, out loud"
+    grep -q '"managedFeatures": \[\]' "$dir/.kmpilot.json" || \
+        fail "a feature the checker still finds work in reached managedFeatures"
+    # And the closing step must not tick while that claim stands.
+    mig "$dir" verify report
+    [[ $MIG_EXIT -ne 0 ]] || fail "the report step must not verify with a done, unpromoted feature"
+    expect 'not promoted' "and must name the inconsistency rather than just failing"
+    finish
+fi
+
+if matches integrate-report; then
+    variant integrate-report "the report names refusals, untested features and missing specs"; dir="$VDIR"
+    plan "$dir"; plan "$dir" --confirm; mig "$dir" begin
+    mig "$dir" checkpoint migrate-notes
+    mig "$dir" complete migrate-notes --force
+    rep "$dir" write
+    [[ $REP_EXIT -eq 0 ]] || fail "write exited $REP_EXIT: $OUT"
+    [[ -f "$dir/MIGRATION-REPORT.md" ]] || fail "no MIGRATION-REPORT.md was written"
+    OUT="$(cat "$dir/MIGRATION-REPORT.md")"
+    expect '^# Migration report' "the report must be a report"
+    expect '## Refusals' "a refusal that is not written down is indistinguishable from a bug"
+    expect 'legacy' "discovery's refusals must be named in it"
+    expect '## Behavioural risk' "tests are out of scope, so naming the risk is the mitigation"
+    expect 'git switch -' "the undo belongs in the artifact, not only in scrollback"
+    expect '/audit-spec' "a migrated feature with no spec must be pointed at the one spec writer"
+    # Regenerated in full, never appended to: a report that accretes stale sections
+    # reads as current, which is worse than not having one.
+    rep "$dir" write
+    [[ "$(grep -c '^# Migration report' "$dir/MIGRATION-REPORT.md")" -eq 1 ]] || \
+        fail "the report was appended to rather than regenerated"
+    finish
+fi
+
+if matches control-integrate-no-managed-key; then
+    variant control-integrate-no-managed-key \
+        "NEGATIVE CONTROL: no managedFeatures key means nothing to promote, not an error"; dir="$VDIR"
+    # A template project has no such key: every feature is KMPilot's and already graded
+    # strictly. Erroring here would refuse a project that has nothing wrong with it.
+    sedi '/"managedFeatures"/d' "$dir/.kmpilot.json"
+    plan "$dir"; plan "$dir" --confirm; mig "$dir" begin
+    rep "$dir" promote
+    [[ $REP_EXIT -eq 0 ]] || fail "a project with no managedFeatures key must not be an error: $OUT"
+    expect 'nothing to promote' "and must say why rather than silently doing nothing"
+    rep "$dir" write
+    [[ $REP_EXIT -eq 0 ]] || fail "and the report must still be written: $OUT"
     finish
 fi
 

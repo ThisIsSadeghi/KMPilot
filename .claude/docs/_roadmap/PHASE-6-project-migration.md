@@ -23,38 +23,45 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ## ▶ Resume here (2026-08-06) — cold-start contract
 
-Steps 1–7 are **done and verified** — discovery, the plan, and the whole **clean** phase. This
-block is written to be the only thing a fresh session has to read to keep going. Start it with
-exactly:
+Steps 1–8 are **done and verified** — discovery, the plan, the **clean** phase and the
+**integrate** phase. All four phases of Stage B exist and are under test. What is left is
+step 9: **running it against real repos.** This block is written to be the only thing a fresh
+session has to read to keep going. Start it with exactly:
 
 ```
-read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 8
+read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight.** Steps 1–7 are committed and the tree is clean as of 2026-08-06.
-> Confirm with `git log --oneline -2` — it should show `82a0601` on top of `27ddc58`. If it does
-> not, work has happened since; trust the repo over this block and update it.
+> **Step 8 is uncommitted.** Steps 1–7 are committed (`76dc276` on top of `82a0601` on top of
+> `27ddc58`); step 8 is **staged but not committed** — the user drives commits. Confirm with
+> `git log --oneline -3` and `git status --short`. If the log shows step 8 committed, work has
+> happened since; trust the repo over this block and update it.
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Two commits:
-`27ddc58` *"Discover and plan a project migration"* (steps 1–4) and `82a0601` *"Add the clean
-phase to project migration"* (steps 5–7). Do not commit or push unless the user says so.
+Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Three commits so far:
+`27ddc58` *"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean
+phase to project migration"* (steps 5–7), `76dc276` (resume block). Step 8 is in the index.
+Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
 | `.claude/skills/_shared/kmpilot_discover.py` | step 2 — read-only inventory. Schema 2 |
 | `.claude/skills/_shared/kmpilot_plan.py` | steps 3–5 — plan, confirmation gate, resume ledger, `--refuse` |
 | `.claude/skills/_shared/kmpilot_migrate.py` | steps 6–7 — checkpoint branch, restore, verify, complete, refuse |
-| `.claude/skills/kmp-to-kmpilot/SKILL.md` | the skill: Preflight → Discover → Present → Plan → Confirm → Clean |
+| `.claude/skills/_shared/kmpilot_report.py` | step 8 — promotion, `MIGRATION-REPORT.md`, the closing step |
+| `.claude/skills/_shared/kmpilot_check.py` | `append_managed_features()` — the promotion helper (step 8) |
+| `.claude/skills/kmp-to-kmpilot/SKILL.md` | the skill: Preflight → Discover → Present → Plan → Confirm → Clean → Integrate |
 | `.claude/skills/kmp-to-kmpilot/phases/phase-1-discover.md` | how to read the inventory |
 | `.claude/skills/kmp-to-kmpilot/phases/phase-2-plan.md` | steps, statuses, order, work list, the gate, mid-rewrite refusal |
 | `.claude/skills/kmp-to-kmpilot/phases/phase-3-clean.md` | the per-step loop and the cluster→agent map |
+| `.claude/skills/kmp-to-kmpilot/phases/phase-4-integrate.md` | promotion, the report's required contents, the closing step |
 | `scripts/kmpilot_discover_test.py` | discovery self-test |
 | `scripts/kmpilot_plan_test.py` | plan self-test (imports the discovery fixture) |
 | `scripts/kmpilot_migrate_test.py` | clean-phase self-test — **needs git** |
+| `scripts/kmpilot_report_test.py` | integrate-phase self-test — **needs git** |
 | `scripts/make-nonconforming-project.sh` | the Stage B fixture generator |
-| `scripts/migrate-matrix.sh` | 45 variants, 16 negative controls |
+| `scripts/migrate-matrix.sh` | 49 variants, 18 negative controls |
 | `.claude/docs/_roadmap/{PHASE-6-project-migration,README}.md` | this file + the status table |
 
 **`.claude/skills` is generated.** Authored source is the gitignored `pipeline/src`; edit there,
@@ -66,13 +73,14 @@ run `python3 scripts/gen-surfaces.py`, stage only `.claude/`. See `.claude/rules
 python3 scripts/kmpilot_discover_test.py        # PASS, ~1s
 python3 scripts/kmpilot_plan_test.py            # PASS, ~2s
 python3 scripts/kmpilot_migrate_test.py         # PASS, ~5s (needs git)
-bash scripts/migrate-matrix.sh                  # 45 passed · 0 failed (~2 min, builds the fixture)
+python3 scripts/kmpilot_report_test.py          # PASS, ~10s (needs git)
+bash scripts/migrate-matrix.sh                  # 49 passed · 0 failed (~2 min, builds the fixture)
 python3 scripts/gen-surfaces.py --check         # .claude/ and pipeline/dist match the source
 python3 .claude/skills/_shared/kmpilot_check.py --all   # 0 errors 0 warnings
 claude plugin validate ./pipeline/dist --strict         # passed
 ```
 
-All seven were green at the end of the step-7 session. **`gen-surfaces.py --check` only compares
+All eight were green at the end of the step-8 session. **`gen-surfaces.py --check` only compares
 git-*tracked* files** — a newly generated file reads as `missing` until it is `git add`ed. That is
 the expected first surprise, not a bug.
 
@@ -83,7 +91,7 @@ the expected first surprise, not a bug.
   discover  →  kmpilot_discover.py   reads everything, writes NOTHING
   plan      →  kmpilot_plan.py       writes ONE file: .claude/docs/_project/migration-plan.json
   clean     →  kmpilot_migrate.py    the ONLY thing that writes source. Never re-runs discovery
-  integrate →  NOT BUILT (step 8)
+  integrate →  kmpilot_report.py     writes MIGRATION-REPORT.md + .kmpilot.json. No source
 ```
 
 The ledger is the contract every later step consumes — do not invent a second progress file:
@@ -125,49 +133,50 @@ The ledger is the contract every later step consumes — do not invent a second 
    `checkpoint` / `complete` / `refuse` keep the git checkpoints and the statuses consistent with
    each other; `kmpilot_plan.py --mark` knows nothing about git, and a regeneration mid-run
    changes the step list and lapses the confirmation on the run's own progress.
+9. **A `done` step is a claim; promotion is where it is checked.** `managedFeatures` is only ever
+   appended by `kmpilot_report.py promote`, which re-runs the checker first — never by hand, and
+   never on the strength of the ledger. It is the one edit in the whole pipeline that makes the
+   build start failing on a feature, so promoting one the checker never passed makes the
+   migration lie about itself in a file the user did not write.
 
-### 5. Step 8 — what is actually left
+### 5. Step 9 — what is actually left
 
-**Steps 1–7 are done.** The clean phase runs: `begin` → (`next` → `checkpoint` → passes →
-`verify` → `complete`)* with `refuse` restoring and recording in one action. See *Landed
-2026-08-06 — steps 6–7* below.
+**Steps 1–8 are done.** All four phases exist: `begin` → (`next` → `checkpoint` → passes →
+`verify` → `complete`)* → `finish`, with `refuse` restoring and recording in one action. See
+*Landed 2026-08-06 — steps 6–7* and *— step 8* below for the design calls.
 
-Step 8 is the **integrate** phase — the only thing between here and a whole real project going
-through end to end:
+Step 9 is the **real-repo run**, and it is the whole remaining risk:
 
-- **`MIGRATION-REPORT.md`** — what changed per rule, what was refused and why (`plan["refusals"]`
-  already carries both discovery's and the mid-rewrite ones, each with `at`), and which features
-  have **no test source set** and therefore carry the most behavioural risk. Tests are out of
-  scope, so naming them is the whole mitigation.
-- **`managedFeatures` promotion** — append per migrated feature. `kmpilot_check.py` needs the
-  append helper (listed in *Files touched* and still not written). Promote **only** what `verify`
-  passed at zero findings; a promoted feature is graded strictly from then on, so promoting a
-  feature the checker never passed makes the migration lie about itself.
-- **A spec per migrated feature**, via the existing `/audit-spec` generation path — do not invent
-  a second spec writer.
-- The **4 integration points** for features that did not have them. Note these are already a
-  rewrite cluster (`integration`, I1–I4, routed to `integrator`), so decide whether step 8 adds
-  anything here or just verifies it.
-
-Then step 9: run it against `bookshelf`, `bookshelf-featuredir`, `Kickoff26` and hand-built
-projects, with `./gradlew assembleDebug` + `archTest` green, and a transcript per repo in the PR.
+- Run the full pipeline against `bookshelf` (features at repo root → `relocate` steps),
+  `bookshelf-featuredir` (12 checker findings), `Kickoff26` (a template — must refuse), and
+  projects you build by hand.
+- `./gradlew assembleDebug` (android + ios + desktop) and strict `./gradlew archTest` green in
+  the target repo. **Nothing so far compiles anything** — verification is entirely static, by
+  design, and this is the step where that assumption is tested.
+- A transcript per repo goes in the PR.
+- Then tick the Stage B exit criteria below and record the Phase 3 plugin unpark decision.
 
 **Do not skip the real-repo run.** Everything so far is proven against a generated fixture, and
 in Phase 2 **10 of the 14 bugs came from the real repos rather than the fixture**. Expect the same
-ratio here.
+ratio here — and expect the first real failures to be in the rewrite passes, which are the only
+part of the pipeline a fixture cannot exercise (the layer agents write Kotlin; the scripts do not).
+
+`bookshelf` and `bookshelf-featuredir` are **dirty with their Phase-2 adoption output** — that is
+their normal state, not damage. A `begin` there is what absorbs it into a checkpoint commit.
 
 ### 5b. First moves, in order
 
-1. `git log --oneline -3` and `git status --short` — confirm the two commits above and a clean
-   tree. Anything else means work happened after this block was written; trust the repo.
-2. Run the seven baseline commands in §2. **Do not change anything until they are green** — if
-   one fails, that is the finding, and it outranks step 8.
-3. Read `phase-3-clean.md` (the loop step 8 hangs off) and the *Landed 2026-08-06 — steps 6–7*
-   section below (the design calls, so they are not re-litigated).
-4. Then start step 8 per §5. Edit `pipeline/src`, **never** `.claude/skills` directly.
+1. `git log --oneline -3` and `git status --short` — confirm the three commits above with step 8
+   staged. Anything else means work happened after this block was written; trust the repo.
+2. Run the eight baseline commands in §2. **Do not change anything until they are green** — if
+   one fails, that is the finding, and it outranks step 9.
+3. Read `phase-3-clean.md` and `phase-4-integrate.md` (the two phases step 9 exercises) and the
+   *Landed* sections below (the design calls, so they are not re-litigated).
+4. Then start step 9 per §5. Any fix goes in `pipeline/src`, **never** `.claude/skills` directly.
 
-Do **not** re-run a migration against a real repo to "see where things are" — the state you need
-is in this file and in `--status`. A stray `begin` on `bookshelf` puts it on a migration branch.
+A real-repo run is now a deliberate act: it cuts a branch and rewrites source. Do it on purpose,
+on one repo at a time, and say so before starting — do **not** run `begin` against a real repo
+just to "see where things are". `--status` and this file already say that.
 
 ### 6. Test beds and review artifacts
 
@@ -188,8 +197,10 @@ run**; the matrix and both self-tests assert it, but check `git status` in them 
 
 4. **Refusal causes are free text, deliberately.** `--refuse` requires `--reason` but has no
    enumerated cause vocabulary (`android-api` / `unmappable` / `scope` / …). Inventing the taxonomy
-   before any rewrite pass exists to generate refusals would fix it to a shape nobody has observed;
-   revisit at step 7, when real ones exist. Adding one later is additive — a new optional field.
+   before any rewrite pass exists to generate refusals would fix it to a shape nobody has observed.
+   **Still open after step 8** — `MIGRATION-REPORT.md` renders the free-text reason verbatim, which
+   is enough for a human reader and adds no pressure to settle it. The real refusals arrive in step
+   9; decide then. Adding one later is additive — a new optional field.
 
 **Applied 2026-08-06:** an unhoistable shared package gets no tier proposal
 (`proposedTier: "blocked"`), and the plan does not list it as a decision the user must make —
@@ -343,6 +354,61 @@ Two bugs the tests caught, both in the "safe undo" itself:
 Also found: `git switch -` restores the pre-migration **committed** state, so uncommitted work absorbed by `begin` lives in the checkpoint and has to be asked for by name. `begin` now prints the exact `git restore --source={ref} -- .`, and the matrix asserts it does.
 
 Verified: `kmpilot_migrate_test.py` (**9 mutations, each caught** — the gate, the revert, the wip commit, the order, the dirty-tree absorption, the carry-forward of migration state, and the ledger exclusion). `migrate-matrix.sh` is **45 variants / 16 negative controls**. Three test bugs were fixed on the way: two crashes that masked the whole failure list, and a `control-clean-gate` assertion that passed with the gate deleted because an unbegun run refuses those commands anyway — it now asserts the *reason*, not just the exit code. One `grep -q` in a pipeline reported a passing assertion as failed (SIGPIPE under `pipefail`); it is a here-string now.
+
+### Landed 2026-08-06 — step 8 (the integrate phase)
+
+A fourth deterministic script, `.claude/skills/_shared/kmpilot_report.py`: **what the run
+leaves behind**. Everything before it is undone by `git switch -`; this is what a reviewer
+reads six weeks later, and what turns a rewritten feature into one the build enforces.
+
+```
+plan → promote → write → finish        (finish = promote → write → verify → complete → commit)
+```
+
+The one load-bearing call, from which the rest follows:
+
+| Call | Why |
+|---|---|
+| **Promotion re-runs the checker; it never believes the ledger** | `complete --force` exists, so a `done` step is a **claim**. Promotion is the edit that flips a feature from *reported* to *enforced*, so promoting one the checker never passed turns the next `archTest` red on work the migration called finished — in a file the user did not write. Every candidate is re-verified through `verify_step`, the same function `complete` uses: a feature promoted on a different bar than the one that completed it is a migration disagreeing with itself |
+| **Per feature, not all-or-nothing** | one feature the checker still finds work in must not hold back the ones that are finished |
+| **`managedFeatures` is appended, never rewritten** | adopt, `/create-feature` and a migration all write that field. The back-compat contract says a shipped field is not rewritten under a user, so existing entries keep their place and a second run adds nothing |
+| **No `managedFeatures` key = nothing to do, not an error** | that is a template project, where every feature is already graded strictly |
+| **The report is written even when the run went badly** | a refused, blocked or half-finished migration is exactly the run whose record matters. Withholding the report because there is bad news in it hides the run that needs one |
+| **Regenerated in full, never appended to** | a report that accretes stale sections reads as current — worse than not having one |
+| **`verify report` = the report exists AND every `done` feature is promoted** | the second half is what catches a run signing itself off as finished while carrying a forced completion: the feature promotion refused is exactly the feature whose `done` was a claim. `finish --force` records the sign-off *as forced* |
+| **It writes no specs** | `/audit-spec` is the one spec-generation path; a second one is how two of them come to disagree. The report **names** every migrated feature that has none. `finish` does not block on it — refusing to write the report because a document is missing withholds the artifact that records the gap |
+| **Test source sets are read off disk, not from discovery** | migration does not touch tests, so what is on disk now is what discovery saw — and the report works against a plan generated before this phase existed. Both directions are needed: **no** test source set is the highest behavioural risk in a run, and **having** one means tests still referencing the types the rewrite replaced |
+| **`statusSource` decides "migrated" vs "already conforming"** | a `done` nobody worked on is `managedFeatures` or a feature that already conformed. Reporting it as migrated claims credit for code the run never touched and makes every count in the report slightly false |
+
+**The 4 integration points needed nothing.** I1–I4 are checker rules in the `integration`
+cluster, already routed to `integrator` during the clean phase, and `verify` holds a
+`migrate` step at zero findings — so a feature cannot reach `done` unforced with one
+missing. Step 8 adds no second mechanism; it adds the report naming any a forced
+completion left behind. *(This settles the open question in §5.)*
+
+Two bugs found, both by the new tests:
+
+- **`kmpilot_plan.py --mark` could not change an already-remembered status.** `merge_progress`
+  reads `step["status"]` as the *derived* answer, so calling it a second time over
+  already-merged steps saw a remembered status where it expected a derived one and declined
+  to overwrite. `--mark migrate-x=skipped` on a step the ledger already called `done`
+  printed a plan still saying `done`, and the *next* regeneration silently flipped it — the
+  file on disk disagreeing with what the next run derives from it. Fixed by extracting
+  `apply_remembered()` (the writing) from the two different decisions about *whether* to
+  write, and marking a step whose `statusSource` is `derived` and status is not `pending` is
+  now refused for the same reason `DERIVED_STATUSES` are.
+- **Six of the new assertions passed for the wrong reason** and were caught only by mutation
+  testing: the append helper's dedupe and ordering were never reached because the caller
+  pre-filters; `verify report`'s missing-file half was masked by its promotion half; and the
+  behavioural-risk assertions matched feature names in the *features table* rather than in
+  the risk section, so deleting the risk analysis entirely still passed.
+
+Verified: `kmpilot_report_test.py` — a whole migration on the fixture (confirm → begin →
+force a completion → promote → report → close), with **14 mutations, each caught**.
+`migrate-matrix.sh` is **49 variants / 18 negative controls**, the four new ones each proven
+able to fail. `append_managed_features` smoke-tested against `bookshelf-featuredir`'s real
+manifest: append-only, idempotent, rest of the file byte-identical, result re-parsed before
+saving.
 
 ## Project-scoped, not feature-scoped
 
@@ -551,18 +617,22 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `pipeline/src/skills/_shared/kmpilot_discover.py` | ✅ **new** — the discovery pass (step 2); schema 2 adds `findingRows` (step 4) | OVERRIDE |
 | `pipeline/src/skills/_shared/kmpilot_plan.py` | ✅ **new** — plan generation, confirmation, the resume ledger (steps 3–4) and mid-rewrite refusal via `--refuse`/`--unrefuse` (step 5) | OVERRIDE |
 | `pipeline/src/skills/_shared/kmpilot_migrate.py` | ✅ **new** — the clean phase's execution envelope: checkpoint branch, per-step checkpoints, restore, verify, complete, refuse (steps 6–7) | OVERRIDE |
+| `pipeline/src/skills/_shared/kmpilot_report.py` | ✅ **new** — the integrate phase: promotion, `MIGRATION-REPORT.md`, the closing step (step 8) | OVERRIDE |
 | `pipeline/src/skills/kmp-to-kmpilot/phases/phase-3-clean.md` | ✅ **new** — the per-step loop and the cluster→agent map | OVERRIDE |
+| `pipeline/src/skills/kmp-to-kmpilot/phases/phase-4-integrate.md` | ✅ **new** — promotion, the report's required contents, the closing step | OVERRIDE |
+| `pipeline/src/agents/feature-development/integrator.md` | ✅ points `managedFeatures` at `append_managed_features()` instead of a hand edit | OVERRIDE |
 | `scripts/kmpilot_migrate_test.py` | ✅ **new** — clean-phase self-test (needs git) | stripped on install |
+| `scripts/kmpilot_report_test.py` | ✅ **new** — integrate-phase self-test (needs git) | stripped on install |
 | `scripts/kmpilot_discover_test.py` | ✅ **new** — discovery self-test | stripped on install |
 | `scripts/kmpilot_plan_test.py` | ✅ **new** — plan self-test | stripped on install |
-| `.claude/skills/_shared/kmpilot_check.py` | `managedFeatures` append helper. *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no checker change needed* | OVERRIDE |
+| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving. *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
 | `.claude/skills/_shared/patterns.md` | migration entry alongside create/modify | OVERRIDE |
 | `CLAUDE.md` | mandatory-skill table gains both commands | TIER1 (merged) |
 | `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715) | not delivered |
 | `ADOPTING.md` | same rename (:81); compatibility note | stripped on install |
 | `scripts/make-nonconforming-project.sh` | **new** — Stage B fixture: several features + shared code | stripped on install |
 | `scripts/make-android-target.sh` | **new** — Stage C Android fixture (Compose + Hilt + Retrofit) | stripped on install |
-| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan and clean-phase quality under test (45 variants) | stripped on install |
+| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (49 variants) | stripped on install |
 | `.claude/docs/_roadmap/PARKED.md` | migrate entry resolved; full-app rejection recorded as reversed | not delivered |
 
 Skills are OVERRIDE tier, so both commands reach every existing install on `./update.sh` with no
@@ -600,10 +670,14 @@ commit only `.claude/`.
 7. ✅ **Done 2026-08-06.** Rewrite passes, one rule cluster at a time, each delegating to the
    existing layer agent. *(`next` → `checkpoint` → passes → `verify` → `complete`, gated on a
    confirmed plan and on the dependency order; `phase-3-clean.md` drives it.)*
-8. `MIGRATION-REPORT.md`, spec generation, `managedFeatures` promotion, resume support.
-   ← **next**
+8. ✅ **Done 2026-08-06.** `MIGRATION-REPORT.md`, spec generation, `managedFeatures` promotion,
+   resume support. *(`kmpilot_report.py`: `plan` / `promote` / `write` / `finish`, gated on a
+   confirmed and begun run. Promotion re-runs the checker rather than believing a `done` step;
+   `append_managed_features()` in `kmpilot_check.py` is append-only and idempotent; specs are
+   named, not written — `/audit-spec` stays the one spec writer. Resume support was already the
+   ledger: `finish` is idempotent and `verify report` is what says a run is actually closed.)*
 9. Run against `bookshelf-featuredir`, `bookshelf`, `Kickoff26`, and the projects you build by
-   hand. Transcript of each goes in the PR.
+   hand. Transcript of each goes in the PR. ← **next**
 
 **Stage C** — only after Stage B is confirmed
 
@@ -657,7 +731,7 @@ commit only `.claude/`.
 # ── steps 1-4, landed: discovery writes nothing; the plan writes one file ───
 python3 scripts/kmpilot_discover_test.py                   # every classifier fires, ~1s
 python3 scripts/kmpilot_plan_test.py                       # every step kind, the gate, the ledger
-bash scripts/migrate-matrix.sh                             # 45 variants, 16 negative controls
+bash scripts/migrate-matrix.sh                             # 49 variants, 18 negative controls
 scripts/make-nonconforming-project.sh --force              # regenerate the fixture (offline)
 
 python3 .claude/skills/_shared/kmpilot_discover.py --root ~/KMPProjects/bookshelf-featuredir
@@ -677,7 +751,17 @@ python3 $M --root . verify   {step}                        # 0 only when it is a
 python3 $M --root . complete {step}                        # verifies again, commits, marks done
 python3 $M --root . refuse   {step} --reason "…"           # restores AND records, in one action
 
-# ── steps 8-9, not yet ─────────────────────────────────────────────────────
+# ── step 8, landed: the integrate phase. Promotion never believes the ledger ──
+python3 scripts/kmpilot_report_test.py                     # promotion, the report, the closing step
+R=.claude/skills/_shared/kmpilot_report.py
+python3 $R --root . plan                                   # what it would do; writes nothing
+python3 $R --root . promote                                # re-verify, THEN append to managedFeatures
+python3 $R --root . write                                  # MIGRATION-REPORT.md
+python3 $R --root . finish                                 # promote → write → verify → close → commit
+python3 $M --root . verify report                          # 0 only with the report written AND
+                                                           # every done feature promoted
+
+# ── step 9, not yet: the real-repo run ─────────────────────────────────────
 python3 $M --root . status                                 # progress + checkpoints
 python3 .claude/skills/_shared/kmpilot_check.py --all      # strict, expect 0 errors
 ./gradlew assembleDebug

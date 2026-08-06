@@ -19,11 +19,11 @@ Bring an **entire existing KMP project** under the pipeline: discover what is th
 | **1. Discover** — inventory, dependency order, tier proposals, refusals | ✅ **shipped** |
 | **2. Plan** — the written, confirmed migration plan + on-disk resume ledger | ✅ **shipped** |
 | **3. Clean** — checkpoint branch, rewrite one step at a time to zero checker findings, restore-and-refuse | ✅ **shipped** |
-| 4. Integrate — `MIGRATION-REPORT.md`, specs, `managedFeatures` promotion | ⬜ not yet |
+| **4. Integrate** — `MIGRATION-REPORT.md`, specs, `managedFeatures` promotion | ✅ **shipped** |
 
-**Phases 1 and 2 write no source file at all** — discovery writes nothing, the plan writes exactly one file. Source is only ever touched in phase 3, only from a **confirmed** plan, and only behind a checkpoint branch with a per-step commit.
+**Phases 1 and 2 write no source file at all** — discovery writes nothing, the plan writes exactly one file. Source is only ever touched in phase 3, only from a **confirmed** plan, and only behind a checkpoint branch with a per-step commit. Phase 4 writes no source either: one report and one manifest field.
 
-Phase 4 has not landed: when the steps are done, say plainly that the report, the specs and `managedFeatures` promotion are a later increment. Do **not** hand-write `managedFeatures` entries — promoting a feature the checker has not passed is how a migration starts lying about itself.
+Never hand-write a `managedFeatures` entry. Promotion re-runs the checker precisely because a `done` step is a claim — promoting a feature the checker has not passed is how a migration starts lying about itself.
 
 ## Scope
 
@@ -46,7 +46,7 @@ An Android-only project is **not** in scope here; that is Stage C (`/android-to-
 [USER INVOKES] → Preflight → Discover → Present → Plan → Confirm ─┐
                                                                   │
    ┌──────────────────────────────────────────────────────────────┘
-   └→ Begin → ( next → checkpoint → rewrite → verify → complete )* → STOP (report is phase 4)
+   └→ Begin → ( next → checkpoint → rewrite → verify → complete )* → Integrate → STOP
                                         └── blocked? → refuse (restores, then records)
 ```
 
@@ -55,6 +55,8 @@ See: @phases/phase-1-discover.md
 See: @phases/phase-2-plan.md
 
 See: @phases/phase-3-clean.md
+
+See: @phases/phase-4-integrate.md
 
 ---
 
@@ -136,13 +138,27 @@ Feature source is protected by the `protect-feature-files.sh` hook, so before ed
 
 Full loop, the cluster→agent map and the resume rules: @phases/phase-3-clean.md
 
-## Step 7: Stop
+## Step 7: Integrate
 
-State plainly what happened: which steps are done, which were refused and why, that the work is on the `kmpilot/migrate-*` branch, and that **`git switch -` undoes all of it**. If the tree was dirty at `begin`, repeat the `git restore --source={ref} -- .` line — that work is inside the checkpoint commit, not on the base branch.
+Once the steps are worked through, close the run. Generate a spec for each migrated feature first, then finish:
 
-Then say what has **not** happened: `MIGRATION-REPORT.md`, per-feature specs and `managedFeatures` promotion are phase 4 and have not shipped. Useful next actions that do exist:
+```bash
+python3 .claude/skills/_shared/kmpilot_report.py --root {repo} plan     # what it will do
+#   … /audit-spec for each migrated feature that has none — never write specs yourself …
+python3 .claude/skills/_shared/kmpilot_report.py --root {repo} finish   # promote, report, close
+```
 
-- `./gradlew assembleDebug` and `./gradlew archTest` — this phase verifies statically and compiles nothing
+`finish` re-verifies every finished feature before promoting it to `managedFeatures`, writes `MIGRATION-REPORT.md`, and marks the closing step done. **Never hand-write a `managedFeatures` entry** — a promoted feature is graded strictly from that moment, so promoting one the checker has not passed makes the migration lie about itself.
+
+Full semantics: @phases/phase-4-integrate.md
+
+## Step 8: Stop
+
+State plainly what happened: which steps are done, which were refused and why, which features were promoted, that the work is on the `kmpilot/migrate-*` branch, and that **`git switch -` undoes all of it**. If the tree was dirty at `begin`, repeat the `git restore --source={ref} -- .` line — that work is inside the checkpoint commit, not on the base branch.
+
+Then say what has **not** happened — nothing was compiled and no tests were run or ported:
+
+- `./gradlew assembleDebug` and `./gradlew archTest` — this migration verifies statically and compiles nothing, and every promoted feature is now graded strictly
 - `python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} status` — progress and checkpoints
-- `/test-feature` — pre-existing tests are out of scope for migration; regenerate deliberately
+- `/test-feature` — pre-existing tests are out of scope for migration; `MIGRATION-REPORT.md` names which features need it most
 - `/review-feature` — review a migrated feature against the rules

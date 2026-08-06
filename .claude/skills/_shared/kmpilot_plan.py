@@ -614,6 +614,23 @@ def write_plan(root: Path, plan: dict) -> Path:
     return path
 
 
+def apply_remembered(step: dict, entry: dict) -> None:
+    """Write one remembered status onto a step — the writing only, never the decision.
+
+    Whether a remembered status *may* be applied is a separate question with two
+    different answers (`merge_progress` derives it, `--mark` is told it), and having
+    them write the result two different ways is how the ledger on disk comes to
+    disagree with what the next regeneration derives from it.
+    """
+    step["status"] = entry["status"]
+    step["statusSource"] = "ledger"
+    note = entry.get("note")
+    if note:
+        step["statusReason"] = note
+    elif entry["status"] == "skipped":
+        step["statusReason"] = "skipped by the user — out of scope for this migration"
+
+
 def merge_progress(steps: list[dict], progress: dict) -> None:
     """Apply remembered statuses where the derived one leaves room for them.
 
@@ -621,6 +638,10 @@ def merge_progress(steps: list[dict], progress: dict) -> None:
     the repo as it is now and are re-derived every run. `in-progress`, `done` and
     `skipped` are what the rewriting phases and the user wrote, and are the reason a
     half-finished migration can be resumed instead of restarted.
+
+    Call this on **freshly derived** steps, once. It reads `step["status"]` as the
+    derived answer, so a second call over already-merged steps would see a remembered
+    status where it expects a derived one and refuse to touch it.
     """
     for step in steps:
         step["statusSource"] = "derived"
@@ -632,13 +653,7 @@ def merge_progress(steps: list[dict], progress: dict) -> None:
             # facts about the repo as it is now. A stale ledger entry does not get
             # to overrule one — that is how a refused feature gets half-migrated.
             continue
-        step["status"] = remembered
-        step["statusSource"] = "ledger"
-        note = progress[step["id"]].get("note")
-        if note:
-            step["statusReason"] = note
-        elif remembered == "skipped":
-            step["statusReason"] = "skipped by the user — out of scope for this migration"
+        apply_remembered(step, progress[step["id"]])
 
 
 def summarize(steps: list[dict]) -> dict:
@@ -1171,11 +1186,26 @@ def main(argv: list[str]) -> int:
                       "repo, not a ledger entry. Resolve it in the source, then regenerate.",
                       file=sys.stderr)
                 return 2
+            # A `done` nobody recorded is `managedFeatures` or a feature that already
+            # conformed. Same reason as above: it is a fact about the repo, and the
+            # ledger does not get to overrule one.
+            if (
+                by_id[step_id]["status"] != "pending"
+                and by_id[step_id].get("statusSource") != "ledger"
+            ):
+                print(f"error: {step_id} is already {by_id[step_id]['status']} because the repo "
+                      "says so, not because a run recorded it — there is no progress to mark.",
+                      file=sys.stderr)
+                return 2
             entry = {"status": status, "at": now()}
             if args.note:
                 entry["note"] = args.note
             plan["progress"][step_id] = entry
-        merge_progress(plan["steps"], plan["progress"])
+            # Applied here rather than through merge_progress: these steps already carry
+            # a merged status, and merge_progress reads that slot as the *derived* one —
+            # it would decline to overwrite the very entry this flag just replaced,
+            # leaving the file saying one thing and the next regeneration another.
+            apply_remembered(by_id[step_id], entry)
         plan["summary"] = summarize(plan["steps"])
         plan["next"] = next_step(plan["steps"])
 

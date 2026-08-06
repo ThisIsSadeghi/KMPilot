@@ -94,11 +94,18 @@ explicitly in your summary — never leave it as a silent edit.
 **Gate**: `.kmpilot.json` contains a `managedFeatures` array (adopt mode writes it;
 template projects have no such key and need nothing here).
 
-Append `{featurename}` to it:
+Append `{featurename}` to it with the helper, not by hand:
 
-```json
-"managedFeatures": ["bookdetail", "{featurename}"],
+```bash
+python3 -c "import sys; sys.path.insert(0, '.claude/skills/_shared'); \
+import kmpilot_check as c; from pathlib import Path; \
+print(c.append_managed_features(Path('.'), ['{featurename}']))"
 ```
+
+It is append-only and idempotent, leaves the rest of the manifest byte-identical, and
+re-parses the result before saving — a manifest a stray edit corrupts takes the whole
+project out of adopt mode silently. It returns `[]` when the entry is already there and
+`None` on a template project, so both are safe no-ops.
 
 **Why it matters.** An adopted repo usually has features that predate KMPilot. The checker
 grades anything *not* in this list at warning severity — reported in full, never failing the

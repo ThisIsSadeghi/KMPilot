@@ -1046,6 +1046,67 @@ def resolve_managed_features(root: Path) -> list[str] | None:
     return re.findall(r'"([^"]+)"', m.group(1))
 
 
+def append_managed_features(root: Path, features: list[str]) -> list[str] | None:
+    """Add `features` to `.kmpilot.json`'s `managedFeatures`. Returns the names
+    actually added — already-present ones are skipped — or `None` when there is no
+    manifest or no such key, which is a template project where every feature is
+    KMPilot's and grading is already strict.
+
+    Promotion is what turns a feature from *reported* into *enforced*, so it is the
+    one edit in the pipeline that can make the next `archTest` fail on code somebody
+    signed off. It is therefore append-only and never re-orders what is already
+    there: entries written by adopt, by `/create-feature` and by a migration all mean
+    the same thing, and the release back-compat contract says a shipped field is not
+    rewritten under a user.
+
+    The array is rewritten in the one-line form `install.sh` itself emits and the rest
+    of the file is left byte-identical — a `json.dump` round-trip would reflow arrays
+    the user never touched into a diff nobody asked for. The result is re-parsed
+    before it is saved: a manifest this helper corrupted would take the whole project
+    out of adopt mode silently.
+    """
+    manifest = root / MANIFEST
+    if not manifest.is_file():
+        return None
+    text = read(manifest)
+    try:
+        current = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{MANIFEST} is not valid JSON ({exc}) — fix it by hand first") from exc
+    if not isinstance(current.get("managedFeatures"), list):
+        return None
+
+    existing = [str(f) for f in current["managedFeatures"]]
+    added = [f for f in features if f not in existing]
+    if not added:
+        return []
+
+    merged = existing + added
+    body = ", ".join(json.dumps(f) for f in merged)
+    updated, count = re.subn(
+        r'"managedFeatures"\s*:\s*\[[^\]]*\]',
+        lambda _m: f'"managedFeatures": [{body}]',
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise ValueError(
+            f"{MANIFEST} parses as JSON but its managedFeatures array could not be located "
+            "textually — edit it by hand rather than letting this guess"
+        )
+    try:
+        check_back = json.loads(updated)
+    except json.JSONDecodeError as exc:  # pragma: no cover — defensive
+        raise ValueError(f"the managedFeatures edit would have broken {MANIFEST}: {exc}") from exc
+    if check_back.get("managedFeatures") != merged:
+        raise ValueError(f"the managedFeatures edit did not land as written in {MANIFEST}")
+
+    tmp = manifest.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(updated, encoding="utf-8")
+    os.replace(tmp, manifest)
+    return added
+
+
 def resolve_install_mode(root: Path) -> str:
     """`template` or `adopt` (absent manifest ⇒ template). Some integration points
     describe KMPilot's own app shell and cannot be demanded of a host project."""

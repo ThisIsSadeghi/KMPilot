@@ -67,6 +67,10 @@ REPO_ROOT = check.REPO_ROOT
 PLAN_REL = plan_mod.PLAN_REL
 
 BRANCH_PREFIX = "kmpilot/migrate-"
+# Written by kmpilot_report.py (the integrate phase), verified here: the `report` step
+# is the last thing a run does, and a step that verifies trivially would let a run be
+# called finished with nothing written down.
+REPORT_REL = Path("MIGRATION-REPORT.md")
 
 
 def now() -> str:
@@ -183,7 +187,7 @@ def set_progress(plan: dict, step_id: str, status: str, note: str = "") -> None:
 # ─── verification ────────────────────────────────────────────────────────────
 
 
-def verify_step(root: Path, step: dict) -> tuple[bool, list[str]]:
+def verify_step(root: Path, step: dict, plan: dict | None = None) -> tuple[bool, list[str]]:
     """Is this step actually finished? Returns (ok, human-readable lines).
 
     Static only — no Gradle. A migration that compiles is step 9's exit criterion and
@@ -192,6 +196,32 @@ def verify_step(root: Path, step: dict) -> tuple[bool, list[str]]:
     consume. Deriving it a second way is how a migration and a CI run come to disagree.
     """
     kind, subject = step["kind"], step["subject"]
+
+    if kind == "report":
+        # The closing step's whole content is its outputs, so its verification is that
+        # they exist. Two of them: the report itself, and a promotion consistent with
+        # the ledger. A feature marked done but not in `managedFeatures` means the only
+        # thing that could have blocked promotion happened — the checker still finds
+        # work, i.e. `done` was forced. Saying so here is what stops a run signing
+        # itself off as finished while claiming a migration that did not conform.
+        problems = []
+        if not (root / REPORT_REL).is_file():
+            problems.append(f"{REPORT_REL} has not been written — run the integrate phase")
+        managed = check.resolve_managed_features(root)
+        if plan and managed is not None:
+            unpromoted = sorted(
+                s["detail"]["feature"]
+                for s in plan["steps"]
+                if s["kind"] == "migrate"
+                and s["status"] == "done"
+                and s["detail"]["feature"] not in managed
+            )
+            if unpromoted:
+                problems.append(
+                    f"done but not promoted: {', '.join(unpromoted)} — promotion re-runs the "
+                    "checker, so a feature it refused is one whose completion was forced"
+                )
+        return (not problems), (problems or [f"{REPORT_REL} written; every done feature promoted"])
 
     if kind == "migrate":
         feature = step["detail"]["feature"]
@@ -412,7 +442,7 @@ def cmd_restore(root: Path, plan: dict, step: dict, args, color: Palette) -> int
 
 
 def cmd_verify(root: Path, plan: dict, step: dict, args, color: Palette) -> int:
-    ok, lines = verify_step(root, step)
+    ok, lines = verify_step(root, step, plan)
     mark = f"{color.bold}PASS{color.off}" if ok else f"{color.error}INCOMPLETE{color.off}"
     print(f"{mark}  {step['id']}  {color.dim}{step['kind']}  {step['subject']}{color.off}")
     for line in lines:
@@ -429,7 +459,7 @@ def cmd_complete(root: Path, plan: dict, step: dict, args, color: Palette) -> in
               "something completing it can overrule.", file=sys.stderr)
         return 1
 
-    ok, lines = verify_step(root, step)
+    ok, lines = verify_step(root, step, plan)
     if not ok and not args.force:
         print(f"{color.error}not complete{color.off} — {step['id']} still has work:",
               file=sys.stderr)

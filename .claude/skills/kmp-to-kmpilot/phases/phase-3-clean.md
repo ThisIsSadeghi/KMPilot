@@ -97,7 +97,7 @@ python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} next
 
 - **It does not compile anything.** Verification is static, and deliberately the same checker `/review-feature` and CI consume — deriving conformance a second way is how a migration and a CI run come to disagree. Run `./gradlew assembleDebug` and `./gradlew archTest` yourself before calling the migration finished.
 - **It does not touch tests.** Pre-existing tests are out of scope; `/test-feature` afterwards is the user's call.
-- **It does not write the report or promote to `managedFeatures`.** That is phase 4.
+- **It does not write the report or promote to `managedFeatures`.** That is phase 4 — `@phase-4-integrate.md`. A `complete` here is a claim; promotion re-runs the checker before believing it.
 
 ## Verify the script itself
 
