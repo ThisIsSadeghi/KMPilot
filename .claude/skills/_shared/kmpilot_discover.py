@@ -463,6 +463,44 @@ def find_entry_point(module: Module) -> dict | None:
     return fallback
 
 
+def screen_roots(module: Module) -> list[str]:
+    """The distinct packages that each declare a top-level `@Composable fun *Screen`.
+
+    A module holding several of these is not one feature — it is several, and the
+    rules cannot be satisfied by rewriting it as one: `Screen.kt`'s allowlist admits
+    exactly one screen (plus its Root), and a feature has one DI module, one nav
+    extension and one package. That case is named in the clean phase as a reason to
+    refuse mid-rewrite; finding it here means the user hears it while the plan is
+    still a plan.
+
+    Two deliberate limits on how loudly this is claimed:
+
+    * **Only `*Screen`-named top-level composables count.** A conforming feature has
+      one or two of them (`XScreen` + `XScreenRoot`) in a single package, and dozens
+      of ordinary composables under `components/` that must not be counted.
+    * **Ancestor packages collapse into their descendants.** A feature with a
+      secondary screen in a subpackage (the documented `kind: screen` case) is one
+      feature, not two.
+
+    It drives a **note, not a refusal**. The heuristic can be wrong — a genuine single
+    feature may spread screens across sibling packages — and the cost of being wrong
+    has to stay one line of output rather than a wrongly refused feature.
+    """
+    packages = {
+        package_of(src)
+        for src in module.sources
+        for decl in src.declarations
+        if decl["kind"] == "fun"
+        and "@Composable" in decl["annotations"]
+        and COMPOSABLE_SCREEN.match(decl["name"])
+        and package_of(src)
+    }
+    return sorted(
+        pkg for pkg in packages
+        if not any(other != pkg and other.startswith(pkg + ".") for other in packages)
+    )
+
+
 # ─── Tier proposal ───────────────────────────────────────────────────────────
 
 
@@ -851,6 +889,19 @@ def discover(root: Path) -> dict:
             }
         )
 
+        roots = screen_roots(module)
+        if len(roots) > 1:
+            notes.append(
+                {
+                    "id": "multi-feature-module",
+                    "subject": path,
+                    "message": f"{len(roots)} screen entry points in separate packages "
+                    f"({', '.join(roots)}) — this module looks like several features, not one. "
+                    "KMPilot is feature-sliced: one screen, one DI module, one nav extension, "
+                    "one package per feature module. Split it before migrating, or expect to "
+                    "refuse it mid-rewrite.",
+                }
+            )
         if not module.dir_rel.startswith("feature/"):
             notes.append(
                 {

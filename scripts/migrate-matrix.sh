@@ -82,6 +82,14 @@ reject() {
     fi
 }
 
+# expect_plan <extended-regex> <what it proves> — asserts against the PLAN output.
+# `invariant` runs both passes and leaves discovery in OUT; a step assertion has to
+# be told which of the two it means, or it silently greps the wrong stream and can
+# never match.
+expect_plan() {
+    grep -Eq -- "$1" <<<"$PLAN_OUT" || fail "$2 ${DIM}(no plan line matching /$1/)${OFF}"
+}
+
 # ── variant harness ─────────────────────────────────────────────────────────
 
 # variant <name> <description> — copies the base fixture and sets VDIR to the copy.
@@ -126,6 +134,83 @@ rep() {
     local dir="$1"; shift
     OUT="$(python3 "$INTEGRATE" --root "$dir" "$@" 2>&1)"
     REP_EXIT=$?
+}
+
+# ── the universal invariant ─────────────────────────────────────────────────
+#
+# The goal is not "these N shapes work". It is that **any working KMP project is
+# either migrated or refused with a reason** — never crashed on, never silently
+# dropped, never handed a plan full of nonsense. That claim has to hold on shapes
+# nobody anticipated, so it is asserted mechanically on every shape variant rather
+# than restated per variant.
+#
+# invariant <dir> — runs discovery + plan and asserts the claim. Sets OUT to the
+# discovery output so a variant can add its own shape-specific assertions after.
+invariant() {
+    local dir="$1" disc plan_out
+    disc="$(python3 "$DISCOVER" --root "$dir" --compact 2>&1)"
+    [[ $? -eq 0 ]] || fail "discovery exited non-zero — a refusal is a finding, not a crash"
+
+    # 1. Nothing is written by a read-only pass.
+    [[ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ]] || \
+        fail "discovery wrote to the repo — it must read only"
+
+    # 2. Every included module is accounted for. A module that matches no classifier
+    #    and silently vanishes from the inventory is the worst failure here: the plan
+    #    cannot migrate, refuse or even mention what it never saw.
+    local declared classified
+    declared="$(grep -cE '^\s*include\(' "$dir/settings.gradle.kts")"
+    classified="$(grep -cE '^module  ' <<<"$disc")"
+    [[ "$classified" -ge 1 ]] || fail "no module was classified at all"
+    if [[ "$classified" -lt "$declared" ]]; then
+        fail "only $classified of $declared included modules were inventoried — a module that is silently dropped can never be migrated or refused"
+    fi
+
+    # 3. Every feature has a disposition: a migrate step, or a refusal naming why.
+    plan_out="$(python3 "$PLAN" --root "$dir" --compact 2>&1)"
+    [[ $? -eq 0 ]] || fail "the plan exited non-zero on a discoverable project"
+    local gp
+    while read -r gp; do
+        [[ -n "$gp" ]] || continue
+        if ! grep -qE "^step .* migrate .* ${gp}( |$)" <<<"$plan_out" \
+           && ! grep -qE "^refusal  ${gp}  " <<<"$disc"; then
+            fail "$gp is a feature with neither a migrate step nor a refusal — it would be silently skipped"
+        fi
+    done < <(grep -E '^feature  ' <<<"$disc" | awk '{print $2}')
+
+    # 4. Every refusal explains itself. A bare refusal is indistinguishable from a bug.
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        [[ "$(awk '{print NF}' <<<"$line")" -ge 4 ]] || \
+            fail "a refusal with no reason: $line"
+    done < <(grep -E '^refusal  ' <<<"$disc")
+
+    # 5. The run always has a last step, whatever happened before it.
+    grep -qE '^step .* report ' <<<"$plan_out" || fail "the plan has no closing report step"
+
+    OUT="$disc"
+    PLAN_OUT="$plan_out"
+}
+
+# cap <word> — capitalize. `${x^}` is bash 4; macOS ships 3.2.
+cap() { printf '%s%s' "$(printf '%s' "$1" | cut -c1 | tr '[:lower:]' '[:upper:]')" "$(printf '%s' "$1" | cut -c2-)"; }
+
+# move_module <dir> <from-dir> <to-dir> <old-gradle-path> <new-gradle-path>
+# Relocate a module and follow it in settings.gradle.kts — the mechanical part of
+# putting a project into a different shape.
+move_module() {
+    local dir="$1" from="$2" to="$3" oldp="$4" newp="$5"
+    mkdir -p "$dir/$(dirname "$to")"
+    mv "$dir/$from" "$dir/$to"
+    python3 - "$dir/settings.gradle.kts" "$oldp" "$newp" <<'PY'
+import sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path).read()
+open(path, "w").write(text.replace(f'"{old}"', f'"{new}"'))
+PY
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: $oldp -> $newp" >/dev/null 2>&1
 }
 
 # fingerprint <dir> <subpath> — content + existence of every file under a subtree, so
@@ -946,6 +1031,165 @@ if matches control-integrate-no-managed-key; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SHAPES — the project layout itself varies, and the invariant must still hold
+#
+# The claim under test is NOT "these layouts are supported". It is that a working
+# KMP project in ANY layout is either migrated or refused with a reason. Each
+# variant reshapes the fixture and asserts `invariant`, plus whatever is specific
+# to that shape.
+# ─────────────────────────────────────────────────────────────────────────────
+
+if matches shape-features-plural; then
+    variant shape-features-plural "features live in features/, not feature/"; dir="$VDIR"
+    move_module "$dir" feature/portable features/portable :feature:portable :features:portable
+    invariant "$dir"
+    expect '^feature  :features:portable' "a feature outside feature/ is still found"
+    expect_plan '^step .* relocate  :features:portable' \
+        "and gets a relocate step — the checker only grades feature/*"
+    finish
+fi
+
+if matches shape-nested; then
+    variant shape-nested "features nested under the app module"; dir="$VDIR"
+    move_module "$dir" feature/portable app/features/portable \
+        :feature:portable :app:features:portable
+    invariant "$dir"
+    expect '^feature  :app:features:portable' "a deeply nested feature is still found"
+    finish
+fi
+
+if matches shape-prefixed-modules; then
+    variant shape-prefixed-modules "modules/feature-{name} naming"; dir="$VDIR"
+    move_module "$dir" feature/portable modules/feature-portable \
+        :feature:portable :modules:feature-portable
+    invariant "$dir"
+    expect '^feature  :modules:feature-portable' "a prefixed module name is still found"
+    finish
+fi
+
+if matches shape-shared-not-core; then
+    variant shape-shared-not-core "shared code in common/ and libs/, not core/"; dir="$VDIR"
+    move_module "$dir" core/model common/model :core:model :common:model
+    move_module "$dir" core/netcall libs/netcall :core:netcall :libs:netcall
+    invariant "$dir"
+    # The tier proposal is driven by what the code *is*, not where it sits.
+    expect '^shared  :common:model' "shared code outside core/ is still inventoried as shared"
+    expect '^shared  :libs:netcall' "…from any directory"
+    finish
+fi
+
+if matches shape-multi-feature-module; then
+    variant shape-multi-feature-module "one module holding three unrelated screens"; dir="$VDIR"
+    # "A feature that turns out to be three" is named in phase-3-clean.md as a
+    # mid-rewrite refusal cause. Nothing produces it, so nothing has ever checked
+    # that it is *detected* rather than rewritten into one impossible feature: the
+    # Screen.kt allowlist admits one screen, not three.
+    for extra in billing profile; do
+        Cap="$(cap "$extra")"
+        mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/$extra"
+        cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/$extra/${Cap}Screen.kt" <<EOF
+package com.acme.notes.$extra
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun ${Cap}Screen() {
+    Text(text = "$extra")
+}
+EOF
+    done
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "three screens in one module" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^note  multi-feature-module  :feature:portable' \
+        "a module holding several unrelated screens must be called out — rewriting it as one feature is impossible, the Screen.kt allowlist admits one screen"
+    finish
+fi
+
+if matches control-multi-feature-single; then
+    variant control-multi-feature-single \
+        "NEGATIVE CONTROL: an ordinary one-screen feature is not called several"; dir="$VDIR"
+    # The whole risk of the multi-feature classifier is firing on a normal feature —
+    # a module full of components/ composables, or one carrying a secondary screen in
+    # a subpackage, is still ONE feature. A finding here would appear on every real
+    # feature in every real repo.
+    mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/ui/components"
+    cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/presentation/ui/components/Card.kt" <<EOF
+package com.acme.notes.portable.presentation.ui.components
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun NoteCard() {
+    Text(text = "card")
+}
+EOF
+    # A secondary screen in a SUBPACKAGE of the feature — one feature, not two.
+    mkdir -p "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/edit"
+    cat > "$dir/feature/portable/src/commonMain/kotlin/$PKG_PATH/portable/edit/PortableEditScreen.kt" <<EOF
+package com.acme.notes.portable.edit
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun PortableEditScreen() {
+    Text(text = "edit")
+}
+EOF
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "components and a secondary screen" >/dev/null 2>&1
+    invariant "$dir"
+    reject '^note  multi-feature-module' \
+        "an ordinary feature — components/ composables plus a secondary screen in a subpackage — must never be reported as several features"
+    finish
+fi
+
+if matches shape-layer-sliced; then
+    variant shape-layer-sliced "layer-sliced repo: ui/ + domain/ + data/, no feature module"; dir="$VDIR"
+    # An extremely common Android/KMP layout with no per-feature module at all.
+    # KMPilot is feature-sliced by construction, so the honest outcome is a clean
+    # refusal or a loud note — never silently treating the whole `ui` layer as one
+    # feature and emitting a work list nobody can complete.
+    cp -R "$dir/feature/portable" "$dir/uilayer"
+    rm -rf "$dir/uilayer/src/commonMain/kotlin/$PKG_PATH/portable"
+    for concern in cart checkout; do
+        Cap="$(cap "$concern")"
+        mkdir -p "$dir/uilayer/src/commonMain/kotlin/$PKG_PATH/ui/$concern"
+        cat > "$dir/uilayer/src/commonMain/kotlin/$PKG_PATH/ui/$concern/${Cap}Screen.kt" <<EOF
+package com.acme.notes.ui.$concern
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun ${Cap}Screen() {
+    Text(text = "$concern")
+}
+EOF
+    done
+    printf '\ninclude(":uilayer")\n' >> "$dir/settings.gradle.kts"
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "layer-sliced ui module" >/dev/null 2>&1
+    invariant "$dir"
+    expect '^note  multi-feature-module  :uilayer' \
+        "a whole UI layer is several features, and must be reported as such rather than migrated as one"
+    finish
+fi
+
+if matches shape-flat-root; then
+    variant shape-flat-root "every module at the repo root, no directory grouping"; dir="$VDIR"
+    move_module "$dir" feature/portable portable :feature:portable :portable
+    move_module "$dir" core/model model :core:model :model
+    invariant "$dir"
+    expect '^feature  :portable' "a root-level feature is found"
+    finish
+fi
 
 echo
 echo "${DIM}────────────────────────────────────────────────────────────${OFF}"
