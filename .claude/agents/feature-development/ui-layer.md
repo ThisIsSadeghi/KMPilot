@@ -79,7 +79,7 @@ Everything else — including `{Feature}Content` and **every** sub-component rea
 - `presentation/ui/{Feature}Utils.kt` (optional — only if non-composable helpers exist)
 - `presentation/ui/components/{Feature}Content.kt`
 - `presentation/ui/components/{SubComponent}.kt` × N (one per sub-component)
-- `presentation/navigation/{Feature}Navigation.kt`
+- `presentation/navigation/{Feature}Navigation.kt` — **unless this project has no nav host.** An adopted project may navigate with plain state hoisting (a `when` in `App.kt`), Voyager or Decompose; the checker treats a missing NavHost as *advisory*, not a defect, for exactly that reason. Writing a Route + `NavGraphBuilder` extension there produces dead code and drags in `androidx.navigation.compose`, which nothing else in the app uses. Look for a `NavHost`/`XNavHost` call before creating this file; if there is none, skip it and say so.
 - *(design-aware, per `secondaryScreens[]` entry)* — `surface`: `presentation/ui/components/{Role}Sheet.kt` (or dialog/etc.) + a `{Feature}UiModel` visibility field. `screen`: `presentation/ui/{Feature}{Role}Screen.kt` (own allowlist) + its `components/` + a `{Feature}{Role}Route` and `composable<…>` added to `{Feature}Navigation.kt`'s single `NavGraphBuilder.{featurename}()` extension.
 
 ## Native-view interop (Shape C, Rule 14)
@@ -166,7 +166,7 @@ data class FeatureUiModel(
 - presentation/{Feature}UiModel.kt
 - presentation/{Feature}ViewModel.kt
 - presentation/ui/{Feature}Screen.kt
-- presentation/navigation/{Feature}Navigation.kt
+- presentation/navigation/{Feature}Navigation.kt  ← omit when the project has no nav host
 
 ### ScreenRoot Pattern
 ✅ {Feature}Screen - ViewModel wrapper (collects viewModel.uiModel)

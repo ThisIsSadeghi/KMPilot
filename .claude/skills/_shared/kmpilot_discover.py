@@ -64,6 +64,7 @@ commented-out `import retrofit2.Retrofit` cannot fabricate a refusal.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -529,6 +530,116 @@ def screen_roots(module: Module) -> list[str]:
     )
 
 
+# ─── Carve candidates ────────────────────────────────────────────────────────
+
+# The two module kinds `classify_kind` reaches before it ever asks whether the module
+# holds screens, so neither can ever become a `feature` however many it holds.
+CARVE_HOST_KINDS = ("app", "app-android")
+
+
+def in_package(pkg: str, root: str) -> bool:
+    """Is `pkg` `root` itself or a sub-package of it? Never a prefix match on the raw
+    string — `com.x.booksale` is not inside `com.x.books`."""
+    return bool(pkg) and (pkg == root or pkg.startswith(root + "."))
+
+
+def package_view(module: Module, pkg: str) -> Module:
+    """A read-only view of `module` restricted to one package subtree.
+
+    Every module-scoped classifier here — `find_entry_point`, `android_evidence`,
+    `propose_tier`, `files_declaring` — reads only `.sources`, `.gradle`, `.targets`,
+    `.name` and `.dir_rel`. Handing them a filtered copy is what lets a feature that is
+    still a *package inside another module* be classified by exactly the same code as
+    one that is already its own module. Writing a second set of verdict rules for carve
+    candidates is how two answers to the same question come into existence — the thing
+    this file exists to prevent.
+
+    Shallow copy on purpose: the `Source` objects are shared and never mutated; only the
+    collections describing which of them are in scope are replaced.
+    """
+    view = copy.copy(module)
+    view.sources = [s for s in module.sources if in_package(package_of(s), pkg)]
+    view.source_sets = sorted({source_set_of(s.rel) for s in view.sources} - {""})
+    view.packages = {package_of(s) for s in view.sources} - {""}
+    view.root_package = pkg
+    return view
+
+
+def carve_candidates(module: Module) -> list[str]:
+    r"""Packages inside a non-feature module that each look like a whole feature.
+
+    `classify_kind` returns `app` for the app module before it ever asks whether the
+    module holds screens, and there is no path from `app` to `feature`. On a project
+    whose features have never been split into modules — one `composeApp` holding the
+    shell, the networking and three unrelated screens — discovery therefore found zero
+    features, proposed zero work, and the plan was a single `report` step: a migration
+    reporting success on a project it never touched.
+
+    Restricted to the two kinds that exemption applies to. `core-kmpilot` must never
+    appear here: `COMPOSABLE_SCREEN` is `\w*Screen$`, so the design system's own
+    `XScreen` reads as a screen root, and carving `:core:designsystem` would take the
+    vendored core apart.
+    """
+    if module.kind not in CARVE_HOST_KINDS:
+        return []
+    return screen_roots(module)
+
+
+def feature_name_for(pkg: str) -> str:
+    """Rule 7 applied to a package leaf: lowercase, no hyphens, underscores or camelCase.
+
+    Named here rather than by the agent, because `settings.gradle.kts`, the module
+    directory and the checker all have to agree on it."""
+    return re.sub(r"[^a-z0-9]", "", pkg.rsplit(".", 1)[-1].lower())
+
+
+def in_module_edges(module: Module, carve_pkgs: list[str]) -> dict[str, list[dict]]:
+    """Imports reaching from a carve package to code the module keeps — the shared code
+    a carve would leave behind.
+
+    `source_level_edges` answers this between modules; inside one module there are no
+    Gradle edges to read, so the question is invisible to it. It is the same question
+    with the same answer: an `ApiClient` three screens share cannot stay in the app
+    module once those screens are modules, because a feature depending on the app module
+    inverts the dependency direction.
+
+    Returns carve-package → the uses reaching out of it. Anything resolving into another
+    carve package is excluded: that is a cross-feature edge, reported on its own.
+    """
+    owned = set(module.packages)
+    out: dict[str, list[dict]] = {}
+    for pkg in carve_pkgs:
+        for src in package_view(module, pkg).sources:
+            for name, line in imports_of(src):
+                owner_pkg = name.rsplit(".", 1)[0]
+                if owner_pkg not in owned or in_package(owner_pkg, pkg):
+                    continue
+                if any(in_package(owner_pkg, other) for other in carve_pkgs if other != pkg):
+                    continue
+                out.setdefault(pkg, []).append(
+                    {"symbol": name, "package": owner_pkg, "file": src.rel, "line": line}
+                )
+    return out
+
+
+def carve_cross_edges(module: Module, carve_pkgs: list[str]) -> dict[tuple[str, str], list[dict]]:
+    """Imports from one carve package into another — the cross-feature edge, before
+    either side is a module. Features never depend on features, so this is hoist work
+    exactly as it is between two feature modules that already exist."""
+    out: dict[tuple[str, str], list[dict]] = {}
+    for pkg in carve_pkgs:
+        for src in package_view(module, pkg).sources:
+            for name, line in imports_of(src):
+                owner_pkg = name.rsplit(".", 1)[0]
+                for other in carve_pkgs:
+                    if other != pkg and in_package(owner_pkg, other):
+                        out.setdefault((pkg, other), []).append(
+                            {"symbol": name, "package": owner_pkg, "file": src.rel, "line": line}
+                        )
+                        break
+    return out
+
+
 # ─── Tier proposal ───────────────────────────────────────────────────────────
 
 
@@ -544,6 +655,67 @@ def files_declaring(module: Module, symbols: set[str]) -> set[str]:
         if any(d["name"] in wanted for d in src.declarations):
             out.add(src.rel)
     return out
+
+
+def declaring_closure(
+    module: Module, symbols: set[str], exclude_pkgs: tuple[str, ...] = ()
+) -> set[str]:
+    """`files_declaring`, closed over what those files themselves import from this module.
+
+    A consumer imports one symbol; the file declaring it imports two more from the same
+    module, and those files import more again. Moving only the directly-imported file
+    leaves the moved code referencing a module `:core:*` is not allowed to depend on —
+    a hoist that cannot compile, which is a plan nobody can complete.
+
+    The monolith is where this stops being theoretical: three screens import a hand-
+    rolled `AppContainer`, and the `ApiClient` and wire DTOs they actually use are
+    reached only *through* it. Directly-imported files alone proposed `common.app` for
+    a file holding an `HttpClient`.
+
+    `exclude_pkgs` stops the closure walking back into a feature: a shared file that
+    happens to import a screen must not drag that screen into `:core:*`.
+    """
+    by_rel = {s.rel: s for s in module.sources}
+    owned = set(module.packages)
+
+    def allowed(pkg: str) -> bool:
+        return bool(pkg) and not any(in_package(pkg, skip) for skip in exclude_pkgs)
+
+    # Same-package references carry **no import statement**, so an import-only walk stops
+    # at the first file. In the monolith `AppContainer` and `ApiClient` sit side by side
+    # in one package and nothing links them textually except the bare type name — which
+    # is why the first version of this closure expanded to nothing and proposed
+    # `common.app` for a file holding an `HttpClient`.
+    siblings: dict[str, list[tuple[str, str]]] = {}
+    for src in module.sources:
+        pkg = package_of(src)
+        if not allowed(pkg):
+            continue
+        for decl in src.declarations:
+            siblings.setdefault(pkg, []).append((decl["name"], src.rel))
+
+    frontier = files_declaring(module, symbols)
+    seen: set[str] = set()
+    while frontier:
+        rel = frontier.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        src = by_rel.get(rel)
+        if src is None:
+            continue
+        reached: set[str] = set()
+        for name, _line in imports_of(src):
+            owner_pkg = name.rsplit(".", 1)[0]
+            if owner_pkg in owned and allowed(owner_pkg):
+                reached.add(name)
+        next_files = files_declaring(module, reached)
+        text = "\n".join(src.code_lines)
+        for decl_name, decl_rel in siblings.get(package_of(src), ()):
+            if decl_rel != rel and re.search(rf"\b{re.escape(decl_name)}\b", text):
+                next_files.add(decl_rel)
+        frontier |= next_files - seen
+    return seen
 
 
 def propose_tier(
@@ -869,6 +1041,80 @@ def discover(root: Path) -> dict:
             }
         )
 
+    # ── build settings, per module ──────────────────────────────────────────
+    # These three are facts about a **module**, not about a feature, and they used to
+    # live inside the feature loop. On a project whose features are not modules yet — a
+    # monolith holding its screens in the app module — that meant zero features and
+    # therefore silence about the build settings that will break the migration.
+    # `jvm-target-below-core` is the expensive one: a compile failure the migration
+    # itself introduces, which nothing but this note can catch, because verification is
+    # static by design.
+    #
+    # `core-kmpilot` is skipped: it *is* the bar these are measured against, so flagging
+    # it would report the core as below itself. `other` is an Android-only module, which
+    # is refused as a whole rather than advised about.
+    for path, module in sorted(modules.items()):
+        if module.kind in ("core-kmpilot", "other") or not module.sources:
+            continue
+        # Gated on *declaring multiplatform targets*, not on the KMP plugin alias: this
+        # note is about a `jvm("desktop")` that is missing from a `kotlin { }` block, and
+        # a module with no targets at all (an AGP application module) has no such block
+        # to add it to. Reading the plugin instead would miss any module that applies the
+        # KMP plugin somewhere this script does not parse.
+        if module.targets and "desktop" not in module.targets and "jvm" not in module.targets:
+            notes.append(
+                {
+                    "id": "missing-desktop-target",
+                    "subject": path,
+                    "message": "no desktop/jvm target — KMPilot's rules assume android + ios + "
+                    "desktop, and every expect needs a desktop actual or the build breaks.",
+                }
+            )
+        # `"android" in module.targets` is already the multiplatform signal — it comes
+        # from an `androidTarget` block, which only a KMP module has.
+        #
+        # An AGP **application** module is excluded: `androidResources.enable` is the
+        # KMP `androidLibrary` DSL, so there is no such block to set there, and an
+        # application is the terminus resources propagate *to* rather than through — it
+        # processes its own natively. Adopt writes the flag into every vendored `core/*`
+        # unconditionally, so `core_android_resources` is true in every adopted project
+        # and cannot distinguish the two topologies on its own; without this the note
+        # fires on every application-module project telling it to add something that
+        # does not exist there.
+        if core_android_resources and "android" in module.targets \
+                and "androidApplication" not in module.plugins \
+                and not ANDROID_RESOURCES.search(module.gradle):
+            notes.append(
+                {
+                    "id": "android-resources-not-enabled",
+                    "subject": path,
+                    "message": "no `androidResources.enable = true`, but this project's "
+                    ":core:* modules set it — so compose resources reach the APK there and "
+                    "will not from here. Rule 12 gives every migrated feature a "
+                    "composeResources/values/strings.xml, and without the flag it is "
+                    "silently absent at runtime: the build succeeds and the app dies on the "
+                    "first stringResource() with MissingResourceException.",
+                }
+            )
+        # Not gated on is_kmp: a bytecode target applies to any Kotlin module, and an
+        # Android app module that calls into :core:* inlines from it just the same.
+        if core_jvm_target is not None and module.jvm_target is not None \
+                and module.jvm_target < core_jvm_target:
+            notes.append(
+                {
+                    "id": "jvm-target-below-core",
+                    "subject": path,
+                    "message": f"compiles to JVM {module.jvm_target} but KMPilot's :core:* "
+                    f"modules are JVM {core_jvm_target}, and they expose inline functions "
+                    "(setState, the Either/UiState helpers). Raise this module to "
+                    f"JVM {core_jvm_target} or the migrated feature will not compile. "
+                    "On an Android module raise BOTH halves — `compilerOptions.jvmTarget` "
+                    "AND `compileOptions.source/targetCompatibility`; moving only the "
+                    "Kotlin one fails with \"Inconsistent JVM targets between Java and "
+                    "Kotlin compile tasks\".",
+                }
+            )
+
     # ── features ────────────────────────────────────────────────────────────
     feature_rows: list[dict] = []
     for path in sorted(features):
@@ -966,45 +1212,6 @@ def discover(root: Path) -> dict:
                     "Moving it is part of the plan.",
                 }
             )
-        if "desktop" not in module.targets and "jvm" not in module.targets:
-            notes.append(
-                {
-                    "id": "missing-desktop-target",
-                    "subject": path,
-                    "message": "no desktop/jvm target — KMPilot's rules assume android + ios + "
-                    "desktop, and every expect needs a desktop actual or the build breaks.",
-                }
-            )
-        if core_android_resources and "android" in module.targets \
-                and not ANDROID_RESOURCES.search(module.gradle):
-            notes.append(
-                {
-                    "id": "android-resources-not-enabled",
-                    "subject": path,
-                    "message": "no `androidResources.enable = true`, but this project's "
-                    ":core:* modules set it — so compose resources reach the APK there and "
-                    "will not from here. Rule 12 gives every migrated feature a "
-                    "composeResources/values/strings.xml, and without the flag it is "
-                    "silently absent at runtime: the build succeeds and the app dies on the "
-                    "first stringResource() with MissingResourceException.",
-                }
-            )
-        if core_jvm_target is not None and module.jvm_target is not None \
-                and module.jvm_target < core_jvm_target:
-            notes.append(
-                {
-                    "id": "jvm-target-below-core",
-                    "subject": path,
-                    "message": f"compiles to JVM {module.jvm_target} but KMPilot's :core:* "
-                    f"modules are JVM {core_jvm_target}, and they expose inline functions "
-                    "(setState, the Either/UiState helpers). Raise this module to "
-                    f"JVM {core_jvm_target} or the migrated feature will not compile. "
-                    "On an Android module raise BOTH halves — `compilerOptions.jvmTarget` "
-                    "AND `compileOptions.source/targetCompatibility`; moving only the "
-                    "Kotlin one fails with \"Inconsistent JVM targets between Java and "
-                    "Kotlin compile tasks\".",
-                }
-            )
         cross = [c for c in consumes if modules.get(c) and modules[c].kind == "feature"]
         for other in cross:
             notes.append(
@@ -1036,6 +1243,232 @@ def discover(root: Path) -> dict:
                     "evidence": [],
                 }
             )
+
+    # ── features that are packages, not modules (carve candidates) ──────────
+    # A monolith keeps its screens inside the app module, which `classify_kind` can
+    # never call a feature. Before this, that project inventoried as zero features and
+    # planned one `report` step — a migration claiming success on a project it never
+    # touched. These rows are ordinary `features[]` entries with `location: in-module`;
+    # everything downstream (verdicts, the plan's work list, `capture_regrade`) already
+    # handles an ungradable feature, because a root-level feature is ungradable too.
+    #
+    # Only for an adopted repo: a template's app module is KMPilot's own, its screens
+    # are already feature modules, and proposing to take it apart would be nonsense.
+    carve_shared: list[dict] = []
+    pkg_owner = sorted(
+        ((pkg, p) for p, m in modules.items() for pkg in m.packages),
+        key=lambda o: -len(o[0]),
+    )
+    if role == "adopted":
+        for path in sorted(modules):
+            module = modules[path]
+            carve_pkgs = carve_candidates(module)
+            if not carve_pkgs:
+                continue
+            reaching_out = in_module_edges(module, carve_pkgs)
+            cross = carve_cross_edges(module, carve_pkgs)
+            taken_names: dict[str, str] = {}
+
+            for pkg in carve_pkgs:
+                view = package_view(module, pkg)
+                name = feature_name_for(pkg)
+                proposed = f":feature:{name}"
+                blocking = blocking_evidence(view)
+                entry = find_entry_point(view)
+
+                # This package already belongs to a feature module: the file in the app
+                # module is a **stray**, not a new feature. Carving a second module for a
+                # package that already has one would split one feature across two.
+                home = next(
+                    (
+                        p
+                        for p, m in sorted(modules.items())
+                        if m.kind == "feature"
+                        and any(in_package(pkg, owned) for owned in m.packages)
+                    ),
+                    None,
+                )
+                if home:
+                    notes.append(
+                        {
+                            "id": "screen-outside-its-feature",
+                            "subject": f"{path} → {home}",
+                            "message": f"{path} declares a screen in {pkg}, which is already "
+                            f"{home}'s package. That is a stray file, not a feature that was "
+                            f"never split out — move it into {modules[home].dir_rel}/ rather "
+                            "than carving a second module for a package that already has one.",
+                        }
+                    )
+                    continue
+
+                # A collision is a refusal and gets **no feature row**: every consumer
+                # downstream keys features by `gradlePath`, so emitting a second row for
+                # an occupied path would quietly give one feature two entries, two
+                # migrate steps and two different answers about its status.
+                collision = (
+                    f"{proposed} already exists in this project"
+                    if proposed in modules
+                    else f"{taken_names[name]} already carves to {proposed}"
+                    if name in taken_names
+                    else ""
+                )
+                taken_names.setdefault(name, pkg)
+
+                if collision:
+                    refusals.append(
+                        {
+                            "subject": f"{path} ({pkg})",
+                            "kind": "carve",
+                            "reason": f"cannot carve {pkg} — {collision}. Rename the package or "
+                            "the existing module first; carving onto an occupied path would "
+                            "merge two features into one directory.",
+                            "evidence": [f"{module.dir_rel} ({pkg})"],
+                        }
+                    )
+                    continue
+
+                if blocking:
+                    verdict = "android-locked"
+                elif entry is None:
+                    verdict = "no-entry-point"
+                else:
+                    verdict = "portable"
+
+
+                consumes = sorted(
+                    {
+                        owner
+                        for src in view.sources
+                        for sym, _line in imports_of(src)
+                        for owner_pkg, owner in pkg_owner
+                        if owner != path
+                        and sym.rsplit(".", 1)[0] == owner_pkg
+                    }
+                )
+
+                feature_rows.append(
+                    {
+                        "name": name,
+                        # The path it *will* have. Nothing on disk answers to it yet, so
+                        # every consumer has to read `location` before treating it as a
+                        # module — which is exactly what `gradable: false` already means
+                        # for a root-level feature.
+                        "gradlePath": proposed,
+                        "dir": f"feature/{name}",
+                        "package": pkg,
+                        "location": "in-module",
+                        "owner": path,
+                        "ownerDir": module.dir_rel,
+                        "sourceDirs": sorted(
+                            {
+                                f"{module.dir_rel}/src/{source_set_of(s.rel)}/kotlin/"
+                                + pkg.replace(".", "/")
+                                for s in view.sources
+                                if source_set_of(s.rel)
+                            }
+                        ),
+                        "targets": module.targets,
+                        "catalogs": module.catalogs,
+                        "sourceSets": view.source_sets,
+                        "entryPoint": entry,
+                        "verdict": verdict,
+                        "inManagedFeatures": False,
+                        "androidEvidence": blocking,
+                        "notableDeps": view.notable_deps(catalog_map),
+                        # Ungradable for the same reason a root-level feature is: the
+                        # checker only grades `feature/*`. `kmpilot_migrate.py checkpoint`
+                        # captures the real "before" once the carve has landed.
+                        "findings": {},
+                        "findingCount": 0,
+                        "advisoryCount": 0,
+                        "findingRows": [],
+                        "consumes": consumes,
+                        "consumedBy": [path],
+                        **({"nameNormalizedFrom": pkg.rsplit(".", 1)[-1]}
+                           if pkg.rsplit(".", 1)[-1] != name else {}),
+                    }
+                )
+
+                if collision:
+                    refusals.append(
+                        {
+                            "subject": proposed,
+                            "kind": "carve",
+                            "reason": f"cannot carve {pkg} — {collision}. Rename the package or "
+                            "the existing module first; carving onto an occupied path would "
+                            "merge two features into one directory.",
+                            "evidence": [f"{module.dir_rel} ({pkg})"],
+                        }
+                    )
+                elif blocking:
+                    refusals.append(
+                        {
+                            "subject": proposed,
+                            "kind": "carve",
+                            "reason": "Android-only APIs in non-Android source sets: "
+                            + ", ".join(sorted({e["reason"] for e in blocking})),
+                            "evidence": [
+                                f"{e['file']}:{e['line']} {e['import']}" for e in blocking[:8]
+                            ],
+                        }
+                    )
+                elif entry is None:
+                    # `screen_roots` found a `*Screen` here, so this should be
+                    # unreachable — but a verdict with no matching refusal would leave a
+                    # feature that gets a migrate step and no carve step: a plan nobody
+                    # can complete, which is the one outcome the invariant forbids.
+                    refusals.append(
+                        {
+                            "subject": proposed,
+                            "kind": "carve",
+                            "reason": "no screen entry point — no top-level @Composable fun in "
+                            f"{pkg}, so there is no screen to migrate",
+                            "evidence": [],
+                        }
+                    )
+
+                uses = reaching_out.get(pkg, [])
+                if uses:
+                    symbols = {u["symbol"] for u in uses}
+                    # Closed over the owner's own imports, minus every carve package: the
+                    # `ApiClient` a screen reaches through a DI container has to move with
+                    # it, and the screens themselves must never be dragged along.
+                    declaring = declaring_closure(module, symbols, tuple(carve_pkgs))
+                    tier, reason, _ = propose_tier(module, declaring or None)
+                    carve_shared.append(
+                        {
+                            "owner": path,
+                            "consumer": proposed,
+                            "packages": sorted({u["package"] for u in uses}),
+                            "symbols": sorted(symbols),
+                            "declaredIn": sorted(declaring),
+                            "evidence": [f"{u['file']}:{u['line']}" for u in uses[:8]],
+                            "proposedTarget": TIER_LABELS[tier],
+                            "proposedTier": tier,
+                            "reason": reason,
+                        }
+                    )
+
+            notes.append(
+                {
+                    "id": "features-inside-module",
+                    "subject": path,
+                    "message": f"{len(carve_pkgs)} screen package(s) live inside this module "
+                    f"({', '.join(carve_pkgs)}) — they are features that were never split out. "
+                    "Each gets a carve step that creates feature/{name}/ and moves the package "
+                    "into it; the module keeps the app shell.",
+                }
+            )
+            for (consumer_pkg, owner_pkg), _uses in sorted(cross.items()):
+                notes.append(
+                    {
+                        "id": "cross-feature-dependency",
+                        "subject": f":feature:{feature_name_for(consumer_pkg)} → "
+                        f":feature:{feature_name_for(owner_pkg)}",
+                        "message": "features never depend on other features — the shared code has "
+                        "to reach :core:* before either feature is migrated.",
+                    }
+                )
 
     # ── shared code ─────────────────────────────────────────────────────────
     shared_rows: list[dict] = []
@@ -1112,6 +1545,11 @@ def discover(root: Path) -> dict:
             }
         )
 
+    # Shared code inside the *app* module, reached by a package that is about to become
+    # a feature. Same row shape and same `extract` machinery: once the carve lands, the
+    # consumer is a real module and the edge is an ordinary cross-module one.
+    in_feature_shared.extend(carve_shared)
+
     # ── order ───────────────────────────────────────────────────────────────
     scope = sorted(set(features) | set(shared))
     order, cycles = topo_order(scope, all_edges)
@@ -1153,6 +1591,14 @@ def discover(root: Path) -> dict:
             "catalogs": catalogs,
             "managedFeatures": managed,
             "moduleCount": len(modules),
+            # Published because the plan phase writes a build file for every module a
+            # carve creates, and these are the two settings that decide whether it will
+            # run: the JVM level it must reach to inline from :core:*, and whether
+            # compose resources need `androidResources.enable` to reach the APK here.
+            # Both are already the subject of a note when an *existing* module gets them
+            # wrong — a module the migration creates should simply be born correct.
+            "coreJvmTarget": core_jvm_target,
+            "coreAndroidResources": core_android_resources,
         },
         "modules": [
             {
@@ -1189,6 +1635,7 @@ def discover(root: Path) -> dict:
                 if f["gradlePath"] not in refused
                 and f["verdict"] not in ("conforming", "owned")
             ),
+            "carveCandidates": sum(1 for f in feature_rows if f["location"] == "in-module"),
             "conforming": sum(1 for f in feature_rows if f["verdict"] == "conforming"),
             "owned": sum(1 for f in feature_rows if f["verdict"] == "owned"),
             "refused": len(refusals),
@@ -1219,7 +1666,11 @@ def print_compact(report: dict) -> None:
         # are still the checker talking — printed under their own label so dropping them
         # from the count does not also drop them from view.
         advisory = f"  advisory={f['advisoryCount']}" if f.get("advisoryCount") else ""
-        print(f"feature  {f['gradlePath']}  {f['verdict']}  location={f['location']}  "
+        # `owner=` only on in-module rows: the column says which module still holds this
+        # feature's source, and appending it unconditionally would change every existing
+        # feature line the matrix asserts against.
+        owner = f"  owner={f['owner']}" if f.get("owner") else ""
+        print(f"feature  {f['gradlePath']}  {f['verdict']}  location={f['location']}{owner}  "
               f"entry={entry}  findings={rules}{advisory}")
     for s in report["shared"]:
         print(f"shared  {s['gradlePath']}  -> {s['proposedTarget']}  "

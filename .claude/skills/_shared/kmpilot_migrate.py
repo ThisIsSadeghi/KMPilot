@@ -264,7 +264,8 @@ def verify_step(root: Path, step: dict, plan: dict | None = None) -> tuple[bool,
     if kind == "migrate":
         feature = step["detail"]["feature"]
         if not (root / "feature" / feature).is_dir():
-            return False, [f"feature/{feature}/ does not exist — the relocate step has not run"]
+            mover = "carve" if step["detail"].get("location") == "in-module" else "relocate"
+            return False, [f"feature/{feature}/ does not exist — the {mover} step has not run"]
         violations, _ = check.run(root, [feature])
         # The bar is the work, not the row count. An advisory finding has no fix, so
         # holding the step until it clears is a step that can never complete — and the
@@ -284,6 +285,46 @@ def verify_step(root: Path, step: dict, plan: dict | None = None) -> tuple[bool,
         if len(work) > 20:
             lines.append(f"  … and {len(work) - 20} more")
         return False, lines + advice
+
+    if kind == "carve":
+        # The only step that has to prove a module was *created*. `relocate` can ask
+        # whether a directory moved; nothing moved here, so each of the four things that
+        # make a Gradle module real is asked for separately — a carve that wrote the
+        # sources but never added the include produces a directory Gradle does not build
+        # and a checker that reports the feature as missing rather than as broken.
+        detail = step["detail"]
+        name, dst = detail["to"].rsplit("/", 1)[-1], detail["to"]
+        owner_dir, pkg = detail["ownerDir"], detail["package"]
+        problems = []
+        if not (root / dst / "build.gradle.kts").is_file():
+            problems.append(f"{dst}/build.gradle.kts does not exist — no module was created")
+        settings = (root / SETTINGS_GRADLE).read_text(encoding="utf-8", errors="replace")
+        if f'include(":feature:{name}")' not in settings:
+            problems.append(
+                f'settings.gradle.kts has no include(":feature:{name}") — Gradle does not '
+                "build this module (Integration Point 1)"
+            )
+        owner_build = root / owner_dir / "build.gradle.kts"
+        if owner_build.is_file() and f'project(":feature:{name}")' not in owner_build.read_text(
+            encoding="utf-8", errors="replace"
+        ):
+            problems.append(
+                f'{owner_dir}/build.gradle.kts does not depend on :feature:{name} — the app '
+                "cannot reach the screen it just gave away (Integration Point 2)"
+            )
+        left = sorted(
+            p.relative_to(root).as_posix()
+            for p in (root / owner_dir).rglob("*.kt")
+            if re.search(rf"^\s*package\s+{re.escape(pkg)}\s*$", p.read_text(
+                encoding="utf-8", errors="replace"), re.MULTILINE)
+        )
+        if left:
+            problems.append(
+                f"{owner_dir} still declares {pkg}: {', '.join(left[:5])}"
+                + (f" … and {len(left) - 5} more" if len(left) > 5 else "")
+                + " — the package was copied, not moved, so two modules now declare it"
+            )
+        return (not problems), (problems or [f"{pkg} → {dst}/ (module created, wired, emptied)"])
 
     if kind == "relocate":
         src, dst = step["detail"]["from"], step["detail"]["to"]
@@ -518,6 +559,22 @@ def cmd_complete(root: Path, plan: dict, step: dict, args, color: Palette) -> in
     if step["status"] in plan_mod.DERIVED_STATUSES:
         print(f"error: {step['id']} is {step['status']} — that is a fact about the repo, not "
               "something completing it can overrule.", file=sys.stderr)
+        return 1
+
+    # A step completed without ever being opened is a step that ran with **no restore
+    # point**: `refuse` and `restore` both rewind to the checkpoint, so for the whole
+    # time the rewrite was happening there was nothing to rewind to. It also loses the
+    # feature's "before" counts for good — `checkpoint` is where `capture_regrade` runs
+    # for a step the plan could not grade, and once the rewrite has landed the findings
+    # it would have recorded are gone. The report then prints `? → 0` for exactly the
+    # feature that needed the most work, which is the symptom the regrade capture was
+    # built to remove. Neither loss is recoverable here; refusing is what stops it
+    # happening silently a second time.
+    if not (plan.get("checkpoints") or {}).get(step["id"]) and not args.force:
+        print(f"error: {step['id']} was never opened — run `checkpoint {step['id']}` "
+              "before working it. Completing now would record a step that had no restore "
+              "point while it ran, and its before-counts are already lost (the report "
+              "prints `?` for them). Use --force to record it anyway.", file=sys.stderr)
         return 1
 
     ok, lines = verify_step(root, step, plan)

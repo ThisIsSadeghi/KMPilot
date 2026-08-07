@@ -132,9 +132,13 @@ CLUSTERS = [
     ),
     (
         "structure",
-        ("R7", "S1", "S2"),
+        # S6 leads this cluster in practice: until the screen sits under
+        # `presentation/ui/`, R3, R12, R13 and S1 are not evaluated at all, so every
+        # other pass is working against a partial picture of the feature.
+        ("R7", "S1", "S2", "S6"),
         "ui-layer",
-        "lowercase package, the Screen.kt allowlist, one composable per file under components/",
+        "the documented feature layout, lowercase package, the Screen.kt allowlist, "
+        "one composable per file under components/",
     ),
     (
         "di",
@@ -157,7 +161,12 @@ CLUSTER_META = {name: (agent, goal) for name, _rules, agent, goal in CLUSTERS}
 # instead of dropping it out of the plan.
 OTHER_CLUSTER = ("other", None, "unrouted rule findings — assign a layer by hand")
 
-STEP_KIND_RANK = {"hoist": 0, "extract": 0, "relocate": 1, "migrate": 2, "report": 3}
+# `carve` and `relocate` share a rank because they are the same job seen from two
+# sides: both put a feature under `feature/` so the checker can grade it. `relocate`
+# moves a module that exists; `carve` creates one that does not.
+STEP_KIND_RANK = {
+    "hoist": 0, "extract": 0, "carve": 1, "relocate": 1, "migrate": 2, "report": 3,
+}
 
 VALID_TIERS = ("common", "data", "designsystem", "split")
 MARKABLE = ("pending", "in-progress", "done", "skipped")
@@ -279,6 +288,71 @@ def apply_rewrite_refusals(steps: list[dict], recorded: dict) -> list[str]:
                 "stay in the checker report and are reported in MIGRATION-REPORT.md"
             )
     return stale
+
+
+def build_file_spec(report: dict, feature: dict) -> dict:
+    """The build file the carve step has to write for a module that does not exist yet.
+
+    Every other step edits build files somebody already got right (or wrong, in which
+    case there is a note about it). A carve **creates** one, which is the first and only
+    place in this pipeline where the settings that have caused every runtime crash found
+    so far can be prevented instead of detected:
+
+    * `jvmTarget` at the core's bar — otherwise the first `setState` fails to inline
+      (step 9 finding 2, which a green build did not catch);
+    * `androidResources.enable` whenever this project's core sets it — otherwise the
+      Rule 12 `strings.xml` never reaches the APK and the app dies on the first
+      `stringResource()` (finding 3, also green at build time);
+    * the serialization plugin — Integration Point 4 hands every migrated feature a
+      `@Serializable` nav route, and the annotation without the compiler plugin compiles
+      clean and throws `SerializerNotFoundException` at runtime (finding 8).
+
+    Three crashes, all invisible to a build, all fixed here by construction.
+    """
+    project = report["project"]
+    owner = next(
+        (m for m in report["modules"] if m["gradlePath"] == feature.get("owner")), None
+    )
+    # `:core:data` only when this feature actually reaches wire or storage code — Rule 5
+    # of the module table ("only if using ApiClient"). The signal is the tier discovery
+    # proposed for the shared code this feature consumes, which is the same evidence a
+    # human would use.
+    consumed_tiers = {
+        row["proposedTier"]
+        for row in report["inFeatureShared"]
+        if row["consumer"] == feature["gradlePath"]
+    }
+    core_deps = [":core:common", ":core:designsystem"]
+    if consumed_tiers & {"data", "split"}:
+        core_deps.insert(1, ":core:data")
+    return {
+        "gradlePath": feature["gradlePath"],
+        "dir": feature["dir"],
+        "namespace": f"{project['packagePrefix']}.{feature['name']}",
+        "catalogAccessor": project.get("catalogAccessor") or "libs",
+        "targets": (owner or {}).get("targets", []),
+        "jvmTarget": project.get("coreJvmTarget"),
+        "androidResources": bool(project.get("coreAndroidResources")),
+        "serializationPlugin": True,
+        "composeResources": True,
+        "coreDeps": core_deps,
+        # Not needed to *carve* the module, but needed the moment its `migrate` step
+        # rewrites it to the rules — and nothing surfaces them until compile time.
+        # `:core:common` exports `koin-core`, which is enough for `getKoin().get()`, but
+        # not `koinViewModel()`; and the Previews section of patterns.md requires the two
+        # tooling artifacts in every feature module. Listing them here means the carve
+        # writes a build file the rewrite can actually build against, instead of each
+        # migrate step rediscovering the same three lines (finding 20).
+        "rewriteDeps": [
+            "kmpilotLibs.koin.compose.viewmodel  (commonMain — koinViewModel())",
+            "kmpilotLibs.compose.ui.tooling.preview  (commonMain — @Preview)",
+            "androidRuntimeClasspath(kmpilotLibs.compose.ui.tooling)  (the AS renderer)",
+        ],
+        "why": "a module the migration creates should be born with the settings that "
+        "three separate runtime crashes were traced to — the JVM level :core:* inlines "
+        "at, androidResources when this project's core enables it, and the serialization "
+        "compiler plugin for the @Serializable nav route Integration Point 4 adds.",
+    }
 
 
 def build_steps(
@@ -418,6 +492,56 @@ def build_steps(
                 }
             )
 
+        # A feature that is still a package inside another module has no module to move;
+        # one has to be created. That is `carve` — `relocate`'s sibling, and the only
+        # step in the pipeline that makes a Gradle module rather than editing one.
+        carve_id = None
+        if feature["location"] == "in-module" and feature["verdict"] not in (
+            "conforming", "owned", "name-collision", "android-locked", "no-entry-point"
+        ):
+            carve_id = unique(f"carve-{slug(path)}", taken)
+            owner = feature["owner"]
+            spec = build_file_spec(report, feature)
+            steps.append(
+                {
+                    "id": carve_id,
+                    "kind": "carve",
+                    "subject": path,
+                    "title": f"carve {feature['package']} out of {owner} → feature/{name}/",
+                    "status": "pending",
+                    "statusReason": "",
+                    # The shared code leaves the app module before the feature does:
+                    # carving first would move a package whose imports are about to be
+                    # rewritten under it.
+                    "dependsOn": [extract_steps[owner]] if owner in extract_steps else [],
+                    "blockedBy": [],
+                    "needsDecision": False,
+                    "detail": {
+                        "owner": owner,
+                        "ownerDir": feature["ownerDir"],
+                        "package": feature["package"],
+                        "from": feature.get("sourceDirs", []),
+                        "to": f"feature/{name}",
+                        "newGradlePath": path,
+                        "buildFileSpec": spec,
+                        "why": "this feature is a package inside "
+                        f"{owner}, not a module — kmpilot_check.py only grades feature/*, "
+                        "so it has no rule findings and cannot be verified until the module "
+                        "exists and the package has moved into it",
+                        "steps": [
+                            f"create feature/{name}/build.gradle.kts to the buildFileSpec below",
+                            f'add include(":feature:{name}") to settings.gradle.kts',
+                            f'add implementation(project(":feature:{name}")) to '
+                            f"{feature['ownerDir']}/build.gradle.kts",
+                            f"move {feature['package']} out of {feature['ownerDir']} into "
+                            f"feature/{name}/src/{{sourceSet}}/kotlin/",
+                            f"repoint {feature['ownerDir']}'s own imports of "
+                            f"{feature['package']} at the new module",
+                        ],
+                    },
+                }
+            )
+
         step_id = unique(f"migrate-{slug(path)}", taken)
         migrate_ids.append(step_id)
         gradable = feature["location"] == "featuredir"
@@ -429,6 +553,8 @@ def build_steps(
         deps += [extract_steps[c] for c in feature["consumes"] if c in extract_steps]
         if relocate_id:
             deps.append(relocate_id)
+        if carve_id:
+            deps.append(carve_id)
         if path in extract_steps:
             deps.append(extract_steps[path])
 
@@ -455,9 +581,10 @@ def build_steps(
             },
         }
         if not gradable:
+            mover = "carve" if feature["location"] == "in-module" else "relocate"
             step["detail"]["gradableNote"] = (
                 "findings unknown until the module sits under feature/ — re-grade after the "
-                "relocate step, then this step's work list is the checker's output"
+                f"{mover} step, then this step's work list is the checker's output"
             )
 
         refusal = refusals.get(path)

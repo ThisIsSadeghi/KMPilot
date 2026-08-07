@@ -61,10 +61,30 @@ next  →  checkpoint  →  [rewrite passes]  →  verify  →  complete
    | `integration` | I1–I4 | `integrator` |
 
    Data shape first: the UI state slots are typed by the DTOs it settles. Give the agent the cluster's `file:line` findings and its goal — not the whole feature and not a free hand.
-4. **`verify {id}`** — for a `migrate` step this re-runs `kmpilot_check.py` for that feature; a step is finished at **zero** findings. For `relocate` it checks the module actually moved and `settings.gradle.kts` followed; for `hoist`/`extract` it re-reads the project and checks the code is no longer shared from where it was.
+
+   **The work list is the checker's; the behaviour contract is the existing code.** Write the brief from the file you are about to change, never from memory of it — and say plainly that nothing may be added, dropped or restyled. A paraphrase is a specification: describe a screen as showing a field it never showed and the agent will faithfully add it, producing a migration that conforms perfectly and behaves differently. That is the failure this phase calls the worst one, and it arrives through the one door no check watches — the checker cannot see it, because the extra behaviour is exactly as rule-compliant as its absence. Pre-empt the plausible-but-wrong readings too: routing a screen whose controls must stay usable through `AppLoadingState` hides them while it loads, a regression the rules would otherwise applaud. Then **ask the agent to report every behaviour delta explicitly** — that request is the only reason the one instance of this so far was caught rather than shipped.
+4. **`verify {id}`** — for a `migrate` step this re-runs `kmpilot_check.py` for that feature; a step is finished at **zero** findings. For `relocate` it checks the module actually moved and `settings.gradle.kts` followed; for `carve` it checks all four things that make a created module real (below); for `hoist`/`extract` it re-reads the project and checks the code is no longer shared from where it was.
 5. **`complete {id}`** — verifies again and refuses to record a step the checker still finds work in. `--force` exists for the cases the script cannot prove, and writes the sign-off down as forced: an unverified tick that reads as verified is worse than no tick.
 
 Never mark progress by hand with `kmpilot_plan.py --mark` during a run. `checkpoint` / `complete` / `refuse` keep the checkpoints and the statuses consistent with each other; `--mark` knows nothing about git.
+
+## A `carve` step — creating the module a feature never had
+
+`carve` is the one step that **creates** a Gradle module rather than editing one. It runs when a feature is still a package inside another module (`location: in-module`), which is what a monolith looks like: one `composeApp` holding the app shell, the networking and three unrelated screens.
+
+Route it to **`integrator`** — it already owns Integration Points 1 and 2, which is most of the job. The step's `detail.steps` lists the work in order, and `detail.buildFileSpec` is the build file to write:
+
+1. create `feature/{name}/build.gradle.kts` **to the spec**;
+2. add `include(":feature:{name}")` to `settings.gradle.kts`;
+3. add `implementation(project(":feature:{name}"))` to the owner's build file;
+4. move the package's sources out of the owner into `feature/{name}/src/{sourceSet}/kotlin/`, preserving source sets;
+5. repoint the owner's own imports (the app shell still calls the screen) at the new module.
+
+**Write `buildFileSpec` as given.** It is not a suggestion — it carries `jvmTarget` at the core's bar, `androidResources` when this project's core enables it, and the serialization plugin. Those three settings are the three runtime crashes step 9 has found, every one of which compiled clean and passed `archTest` before killing the app on launch. A module the migration creates is the one place they can be prevented rather than detected.
+
+**Move, do not copy.** `verify` fails if the owner still declares the package — two modules declaring one package is a build that either fails confusingly or picks a winner silently.
+
+The rewriting to KMPilot's rules is **not** part of the carve. The carve produces a module under `feature/` that Gradle builds and the checker can grade; the `migrate` step that depends on it does the rest, and `checkpoint` prints its real work list the moment it opens.
 
 ## Refusing mid-rewrite
 

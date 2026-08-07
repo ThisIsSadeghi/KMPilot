@@ -145,6 +145,57 @@ mut_groovy() {
     rm -f "$1/settings.gradle.kts"
 }
 
+# ── how the vendored core names the AGP plugin (Phase 6 step 9, finding 15) ──
+#
+# Once ANY `com.android.*` plugin is declared in the root build file, the whole AGP
+# artifact is on the build classpath — including the plugins the root did not name.
+# A vendored core module that then requests `com.android.kotlin.multiplatform.library`
+# WITH a version is refused outright:
+#
+#   Error resolving plugin [id: '…', version: '9.0.1']
+#   > already on the classpath with an unknown version
+#
+# The base fixture names both `androidApplication` and `androidKmpLibrary` in its root,
+# so both versions are known and a versioned alias resolves. A single-module project —
+# one composeApp that is BOTH the KMP module and the Android application, which is what
+# the Phase-6 monolith test bed is — names only `androidApplication`. That project could
+# not run `./gradlew help` after adoption at all, and Phase 2 never saw it because all
+# four of its test repos have a separate android app module.
+mut_agp_only_application_root() {
+    sedi '/alias(libs.plugins.androidKmpLibrary) apply false/d' "$1/build.gradle.kts"
+}
+
+post_agp_only_application_root() {
+    local dir="$1" m
+    for m in common data designsystem; do
+        grep -q 'id("com.android.kotlin.multiplatform.library")' "$dir/core/$m/build.gradle.kts" \
+            || { echo "core/$m names a version for the AGP plugin the root already put on the classpath — Gradle refuses that"; return 1; }
+    done
+    return 0
+}
+
+# The other side of the branch, and the one that would otherwise never be exercised:
+# a root that puts NO AGP on the classpath. Here each subproject resolves the plugin
+# marker itself, so the vendored core MUST name a version — a bare id() would fail with
+# "plugin not found". An always-version-less rewrite passes the variant above and breaks
+# this one.
+mut_agp_not_in_root() {
+    sedi '/alias(libs.plugins.androidApplication) apply false/d;/alias(libs.plugins.androidKmpLibrary) apply false/d' \
+        "$1/build.gradle.kts"
+    # The app and shared modules still declare their own plugins, so the build is
+    # coherent — the plugins are simply resolved per-project instead of at the root.
+}
+
+post_agp_not_in_root() {
+    local dir="$1" m
+    for m in common data designsystem; do
+        grep -q 'alias(kmpilotLibs.plugins.androidKotlinMultiplatformLibrary)' \
+            "$dir/core/$m/build.gradle.kts" \
+            || { echo "core/$m dropped the version, but nothing else puts AGP on the classpath here"; return 1; }
+    done
+    return 0
+}
+
 mut_plain_android() {
     # not KMP at all: no commonMain anywhere, no KMP plugin
     rm -rf "$1/shared"
@@ -480,6 +531,8 @@ VARIANTS=(
   "arrow|mut_arrow|warns|own 'Either'|--dry-run"
   "own-design-system|mut_own_ds|warns|already has a design-system module|--dry-run"
   "groovy-dsl|mut_groovy|refuses|does not support yet|--dry-run"
+  "agp-only-application-root|mut_agp_only_application_root|applies|without a version|"
+  "agp-not-in-root|mut_agp_not_in_root|applies|core/designsystem|"
   "plain-android|mut_plain_android|refuses|does not look like a Kotlin Multiplatform|--dry-run"
   "library-modules|mut_library_modules|adopts|app module shared|--dry-run"
   "no-trailing-newline|mut_no_trailing_newline|applies|kmpilotLibs catalog registered|"

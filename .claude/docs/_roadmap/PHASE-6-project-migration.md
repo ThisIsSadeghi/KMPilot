@@ -21,93 +21,114 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ---
 
-## ▶ Resume here (2026-08-07) — cold-start contract
+## ▶ Resume here (2026-08-07, later session) — cold-start contract
 
 Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way:
-two repos migrated end to end, nine findings, all fixed**. This block is written to be the only
-thing a fresh session has to read to keep going. Start it with exactly:
+three repos, twenty-three findings, all fixed**. This block is the only thing a fresh session has
+to read to keep going. Start it with exactly:
 
 ```
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight (2026-08-07).** Everything is committed and every tree is clean.
-> Confirm with `git status --short` (empty) and `git log --oneline -4` — the tip is *"Make the
-> migration report tell the truth about its own run"*, sitting on `d6b7ce6` *"Specify the test-bed
-> projects step 9 still needs"* and `ea481d4` *"Record the second migration and name the untested
-> surface"*. If anything sits above them, work has happened since; trust the repo over this block
-> and update it. **Nothing has been pushed and no PR is open.**
+> **WORK IS IN FLIGHT. Read this before touching anything.**
 >
-> **The full baseline was green on 2026-08-07** — all four self-tests, `migrate-matrix.sh`
-> **66 passed · 0 failed**, `kmpilot_check --all` 0 errors 0 warnings, `gen-surfaces.py --check`
-> clean, and `mutation_audit.py` **12 caught · 0 survived** (was 7). Re-run §2 before changing
-> anything anyway; a failure there is the finding, and it outranks step 9.
+> **KMPilot itself has 16 uncommitted files and nothing is pushed.** `git status --short`
+> should show `install.sh`, `gradle/libs.versions.toml`, `core/common/build.gradle.kts`, four
+> `.claude/skills/_shared/kmpilot_*.py`, four `.claude/skills/kmp-to-kmpilot/*.md`, four
+> `scripts/*`, and this file. **All of it is the `carve` step plus findings 10–17.** Nothing has
+> been committed — do not commit or push unless the user says so. The authored source is the
+> gitignored `pipeline/src`; `.claude/` is generated, so regenerate with
+> `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
 >
-> **Two repos are migrated.**
+> **The `T01P05-Monolith` migration is COMPLETE and confirmed on a device.** All 8 steps done,
+> three features at 0 actionable findings, promoted to `managedFeatures`, `MIGRATION-REPORT.md`
+> written. Android + desktop + iOS compile, strict `archTest` green, and **the app runs**: Books
+> lists Open Library results through the migrated `data.app` remote layer, Authors aggregates
+> over the same shared datasource, Settings shows "207 Kotlin books found on Open Library"
+> matching `numFound: 207` on the wire, and both toggles stay usable while stats load. No
+> `MissingResourceException`, no `SerializerNotFoundException`, no Koin resolution failure —
+> the three crash classes findings 3, 8 and 15 were about. `git switch -` in that repo undoes
+> the whole run.
 >
-> - **`bookshelf-featuredir`** — branch `kmpilot/migrate-bookshelf`, 9 commits ahead of `master`
->   (`71191d6` → `2982203`), clean tree, all 6 steps done.
-> - **`bookshelf`** — branch `kmpilot/migrate-bookshelf`, 12 commits ahead of `master` (`0e865d2`
->   checkpoint → `ef5f250` report), **all 9 steps done**. 3 features at 0 actionable findings,
->   strict `kmpilot_check --all` 0 errors 0 warnings, android + iOS + desktop compile, **runs on a
->   device**. Its 13th commit is the finding-8 follow-up (the serialization plugin on
->   `feature/search`), added after the run closed. `git switch -` restores `master` exactly in
->   both, and neither branch is pushed.
+> **The one defect the launch found is finding 23** — the tab row draws under the status bar and
+> its top edge is untappable. Pre-existing in the shell, but it is the half of Rule 13 that
+> `check_r13` never inspects, and three features were promoted against it. **The fix is decided
+> and written up under finding 23 below — a repo-scoped `S3`-style check plus a project-level
+> `shell` step — but NOT implemented. It is the first thing to pick up.**
 >
-> **Nine findings so far, all fixed, each with its own *Landed* section below.** Read them before
-> touching the scripts. From `bookshelf-featuredir`: 1 advisory findings · 2 the JVM-target floor ·
-> 3 compose resources never reaching the APK · 4 `androidTarget { }` invisible to discovery. From
-> `bookshelf`: 5 a refusal over a dirty tree left the rewrite behind · 6 `XNavHost` invisible to
-> I4 (which suppressed the real I4 entirely) · 7 the dry run predicted a promotion `promote` never
-> makes · 8 **`@Serializable` with no serialization plugin — new check S5** · 9 a matrix negative
-> control that could not fail.
+> **The test bed carries a snapshot of the pipeline.** `install.sh --adopt` vendors
+> `.claude/skills` at adoption time, so a test bed adopted before a pipeline change silently
+> tests the **old** code — the first discovery run there reported the pre-carve plan. Re-sync
+> with `cp .claude/skills/_shared/kmpilot_*.py {testbed}/.claude/skills/_shared/` (what
+> `./update.sh` does) after changing the pipeline. An easy way to get a false green.
 >
-> **Four of the nine survived every static gate.** A green `assembleDebug`, a green strict
-> `archTest` and a green iOS + desktop compile all passed while the app crashed on launch — twice,
-> in two different repos. **Install and run the APK.** Building is not evidence.
+> **Baseline, all green as of this session** — run these before changing anything; a failure
+> here is the finding and outranks step 9:
 >
-> **Resume at:** the hand-built projects — a shape not yet run. `Kickoff26` is finished: it
-> refuses as a template, correctly, and writes nothing. Both bookshelf repos are done; re-running
-> one only re-tests what is already recorded.
+> ```
+> python3 scripts/kmpilot_check_test.py     python3 scripts/kmpilot_migrate_test.py
+> python3 scripts/kmpilot_discover_test.py  python3 scripts/kmpilot_report_test.py
+> python3 scripts/kmpilot_plan_test.py      python3 scripts/gen-surfaces.py --check
+> bash   scripts/migrate-matrix.sh          # 74 passed · 0 failed
+> bash   scripts/adopt-matrix.sh            # 27 passed · 0 failed
+> python3 scripts/mutation_audit.py         # 23 caught · 0 survived  (~20 min)
+> python3 .claude/skills/_shared/kmpilot_check.py --all   # 21 checks, 0 errors 0 warnings
+> ```
 >
-> **The hand-built projects are specified in
-> [PHASE-6-testbed-projects.md](PHASE-6-testbed-projects.md)** (written 2026-08-06): 25 projects in
-> 5 tiers, each with a self-contained prompt that builds an empty KMP project into one deliberately
-> non-conforming shape, plus the shape's expected outcome and a suggested build order. They live in
-> `~/KMPProjects/kmpilot-testbeds/{NN}-{name}` and arrive **unadopted** — `install.sh --adopt` is
-> under test too, so tier 0 is four projects whose pass condition is a *correct refusal*. **Read that
-> file before running against any of them**; it records what each shape is meant to prove, which
-> matters because a shape that produces zero new findings is what convergence looks like.
+> **NEVER run a matrix while editing what it reads.** `mutation_audit.py` mutates
+> `pipeline/src` in place, and both matrices vendor core from the working tree. Doing this
+> produced two phantom failures in one session (`advisory-no-navhost`, `groovy-dsl`), each
+> costing a stash-and-compare cycle to disprove. Run them serially, on a quiet tree.
 >
-> Highest-value first: **05 `monolith`** (one module, no feature modules — the migration must
-> *create* modules, an operation nothing has tested), **17 `carve-outs`** (must produce zero
-> refusals), **06 `multi-screen-module`** (the only way to fire a mid-rewrite `refuse` on a real
-> repo), **11 `usecase-result`** (an unexercised rewrite cluster and the first real test source sets).
+> **Three repos migrated, twenty-three findings.** From `bookshelf-featuredir`: 1 advisory
+> findings · 2 the JVM-target floor · 3 compose resources never reaching the APK · 4
+> `androidTarget { }` invisible to discovery. From `bookshelf`: 5 a refusal over a dirty tree ·
+> 6 `XNavHost` invisible to I4 · 7 a dry run predicting an edit `promote` never makes · 8
+> `@Serializable` with no plugin (check S5) · 9 a matrix control that could not fail. From
+> **`T01P05-Monolith`** (the first hand-built bed, and the first shape whose failure was total):
+> **10** the monolith silently dropped → the **`carve` step** · **11** module-level notes gated
+> behind "is a feature" · **12** `android-resources-not-enabled` on AGP *application* modules ·
+> **13** `next` prints no work detail · **14** `mutation_audit` could not tell a caught mutation
+> from an already-broken guard · **15** adopt produced a project that could not configure Gradle
+> at all · **16** the vendored catalog missing `lifecycle-viewmodel-compose` · **17** the
+> migration's completion bar could be met **without migrating the feature** → new check **S6** ·
+> **18** I3 blind to adopt's own Koin bootstrap · **19** the `ui-layer` agent mandating a nav
+> file a hoisted-state project must not have · **20** `buildFileSpec` short for a *migrated*
+> module · **21** the step brief is where behaviour silently changes · **22** a step completable
+> without ever being opened (+ S5/S6 missing report blurbs) · **23** the app-shell half of
+> Rule 13 that no check inspects.
 >
-> **Do NOT build those projects from this session.** The user creates each one himself, in its own
-> folder, in a separate Claude session, by pasting that project's prompt block — that isolation is
-> the design, not an accident. Reading the test-bed file is for knowing what a shape is meant to
-> prove; it is never a work order to start generating repos here. **The migration test begins once
-> the projects exist and the user says so.** If none exists yet, there is nothing to run at step 9
-> — say that plainly rather than manufacturing a test bed.
+> **Findings 15 and 17 are the two that matter most, and neither is a migration bug.** 15 is an
+> *adopt* bug (Phase 2) reachable only from a single-module KMP project; 17 is a *checker* bug
+> (Phase 1) that let a feature be promoted to `managedFeatures` having never been rewritten.
+> Both were invisible to every repo tested before this one, and both were found by running the
+> thing rather than by reading it.
 >
-> **The hand-built test beds did not exist yet on 2026-08-07** — `~/KMPProjects/kmpilot-testbeds/`
-> was absent, so the real-repo half of step 9 had nothing to run and was not started. Check again
-> before assuming; the user builds them in separate sessions.
+> **Standing direction from the user, 2026-08-07:** *support everything as much as possible — if
+> it is migratable, migrate it; add capability instead of refusing.* Finding 15 was first
+> written up with "detect and refuse" as the recommendation; that was wrong, and the real fix
+> was one line. **A refusal is the last resort, never the smaller-change default.** The
+> plan-confirmation gate and the checkpoint/undo machinery stay strict — this is about scope,
+> not safety.
 >
-> **The `bookshelf` run left three things recorded but not fixed. Two are now fixed** (2026-08-07,
-> see *Landed 2026-08-07 — the two report bugs*): the report counting its own step as outstanding,
-> and a relocated feature's before-counts being lost so the report said *"no rule findings were
-> recorded"* for the features that needed the most work.
+> **Six of the 25 hand-built test beds do not exist yet.** Only `T01P05-Monolith` has been
+> built. [PHASE-6-testbed-projects.md](PHASE-6-testbed-projects.md) specifies the rest; **the
+> user builds each one himself in a separate session** — that file is never a work order. Next
+> highest value: **17 `carve-outs`** (must produce zero refusals), **06 `multi-screen-module`**
+> (the only way to fire a mid-rewrite `refuse` on a real repo), **11 `usecase-result`** (an
+> unexercised rewrite cluster and the first real test source sets).
 >
-> **The third remains, and it is the largest untested surface in the phase:** **61 of the 66 matrix
-> variants have never been proven able to fail** — `python3 scripts/mutation_audit.py --coverage`
-> prints the list. **Deferred on purpose, 2026-08-07.** Test-bed runs will change code and a
-> mutation anchors to exact source text, so grinding now buys guards that go stale before the PR;
-> and a finding from an unrun repo shape outranks re-verifying an old guard. **Sequencing decided:
-> test beds first, then grind the ~24 `control-*` negative controls before the PR** — a wrong
-> refusal is the failure this phase says costs a user's trust, and a control that cannot fail is
-> exactly how one ships unnoticed. The remaining ~37 are the lowest-value tail.
+> **Convergence is not close.** Seven findings from one repo, against nine from the two before
+> it. The criterion is a repo of a **new shape** producing **zero** new findings; the monolith
+> produced seven, four of them in code written the same day.
+>
+> **Still open, deferred on purpose:** **61 of the 74 matrix variants have never been proven
+> able to fail** (`python3 scripts/mutation_audit.py --coverage`). Test-bed runs keep changing
+> the code a mutation anchors to, so grinding now buys guards that go stale before the PR.
+> **Sequencing decided: test beds first, then the ~24 `control-*` negative controls before the
+> PR** — finding 14 showed the audit itself could not detect an already-broken guard, so that
+> number was never as reassuring as it looked.
 
 ### 1. Where the work lives
 
@@ -774,6 +795,345 @@ and 7. `kmpilot_check.py` is **20 checks**; KMPilot's own six features stay 0 er
 **Convergence:** not close. Two repos, nine findings. `bookshelf` is the first repo whose *shape*
 was new (root-level features), and it produced five.
 
+### Landed 2026-08-07 — step 9, third repo (`T01P05-Monolith`): findings 10–13 and the `carve` step
+
+**The first hand-built test bed, and the first shape whose failure was total.**
+`~/KMPProjects/kmpilot-testbeds/T01P05-Monolith` is tier-1 shape ★05 `monolith`: one
+`composeApp` module holding the app shell, a shared `ApiClient`/`AppContainer`, and three
+unrelated screen packages (`books`, `authors`, `settings`). It adopted cleanly. Then the
+read-only pass reported **`features=0 · shared=0 · refusals=0`** and the plan was a **single
+`report` step**.
+
+**Finding 10 — a whole project silently dropped, and the run would have claimed success.** Not
+a wrong refusal and not a crash: a `MIGRATION-REPORT.md` for a project nothing was done to.
+That is the one outcome the shape sweep's invariant forbids — *migrated or refused with a
+reason, never silently dropped* — and it was invisible to that invariant precisely because the
+invariant can only check features it can **see**. Root cause is one line: `classify_kind`
+returns `app` for the app module before it ever asks whether the module holds screens, and
+there is no path from `app` to `feature`. `screen_roots(:composeApp)` already returned all
+three packages; nothing ever asked it.
+
+**Decided (user, 2026-08-07): build the `carve` step, do not refuse.** Refusing was the smaller
+fix and restores the invariant honestly, but the single-module shape is what a large share of
+real KMP apps look like, and refusing all of them guts Stage B's premise. **`carve` is the
+first and only operation in the pipeline that _creates_ a Gradle module rather than editing
+one.**
+
+| Call | Why |
+|---|---|
+| **a carve candidate is a `package_view` of a module** — `copy.copy` with `.sources` filtered to one package subtree | `find_entry_point`, `android_evidence`, `propose_tier` and `files_declaring` all take a `Module` and read only its collections. A filtered copy means a feature that is still a *package* is classified by **exactly** the same code as one that is already a module. A second set of verdict rules for carve candidates is how two answers to the same question come into existence |
+| **`carve` shares `relocate`'s rank**, and `migrate` depends on it identically | they are one job seen from two sides: both put a feature under `feature/` so the checker can grade it. `capture_regrade` keys on `gradable == False`, so a carved feature's "before" counts are captured with no new mechanism |
+| **a `carve` waits on its owner's `extract`** | the shared code leaves the app module *before* the feature does. Carving first moves a package whose imports are about to be rewritten under it |
+| **`buildFileSpec` — the created module is born correct** | every other step edits a build file somebody already got right or wrong. A carve **writes** one, which is the first place the three runtime crashes this phase has found can be *prevented*: `jvmTarget` at the core's bar (finding 2), `androidResources.enable` when this project's core sets it (finding 3), and the serialization compiler plugin for the `@Serializable` nav route I4 adds (finding 8). All three compiled clean and killed the app on launch |
+| **a stray screen is not a feature** | a screen package the app module declares that an existing feature module *already owns* is a misplaced **file**, reported as `screen-outside-its-feature`. Carving a second module for it would give one feature two rows, two migrate steps and two answers about its status |
+| **a name collision gets a refusal and _no_ feature row** | every consumer downstream keys features by `gradlePath`. Emitting a second row for an occupied path is not a cosmetic duplicate — it is one feature with two entries. This was found by the fixture, which ships exactly that shape |
+| **the declaring-file set is closed transitively, including same-package references** | the three screens import only `AppContainer`; the `ApiClient` and wire DTOs they actually use are reached *through* it, and same-package references carry no `import` at all. The first version expanded to nothing and proposed `common.app` for a file holding an `HttpClient` — a hoist that cannot compile, which is a plan nobody can complete |
+
+**Finding 11 — every module-level note was gated behind "is this a feature".** `jvm-target-below-core`,
+`android-resources-not-enabled` and `missing-desktop-target` all lived inside the per-feature
+loop. With zero features they were all silent — including, on this repo, the JVM 11 vs core JVM
+21 mismatch that **will** produce `Cannot inline bytecode built with JVM target 21` the moment a
+migrated feature calls `setState`. That is finding 2's own guard, blind on the shape it most
+needed to fire on. They are facts about a **module**; they are now emitted per module, skipping
+`core-kmpilot` (it *is* the bar) and gated on *declaring multiplatform targets* rather than on
+the KMP plugin alias — the fixture proved the alias is not reliably present.
+
+**Finding 12 — `android-resources-not-enabled` fired on AGP _application_ modules.**
+`androidResources.enable` is the KMP `androidLibrary` DSL; an application module has no such
+block and does not need one, being the terminus resources propagate *to*. Finding 3 keyed the
+note on "does this project's core enable it?" — but `install.sh --adopt` writes that flag into
+every vendored `core/*` **unconditionally**, so the signal is true in *every* adopted project
+and cannot tell the two topologies apart. Excluded on `androidApplication` in the module's
+plugins. This is the note test-bed 19 (`application-app`) was specified to catch, found early.
+
+**Finding 13 — `next` prints the step title and nothing else.** The plan carries
+`detail.symbols` / `declaredIn` / `evidence` for a `hoist`/`extract`, and for a `carve` a full
+`detail.steps` plus the `buildFileSpec`. `cmd_next` shows none of it, so the operator has to
+open the ledger JSON to find the work. Same class as finding 1's *"`next` printed an empty work
+list"*: a work list nobody is shown.
+
+**Finding 23 — the migration promotes features that depend on a shell contract nothing
+checks.** Found by looking at the running app, and by nothing else: the tab row draws **under
+the status bar**, and the top of each button is untappable because the system consumes the
+touch. The first `input tap` at the button's centre did nothing; 27px lower worked.
+
+Rule 13 is a **contract between two halves**. `XScreen` and `XTopAppBar` deliberately add *no*
+insets; the one app-shell `Scaffold` pads the content with the top + horizontal safe area. Every
+migrated feature now relies on that. But `check_r13` iterates `sources` — **the feature's**
+sources — so it only ever enforces the half that says *a feature must not nest a Scaffold*. The
+half that says *the shell must provide the insets* is never checked, on any project.
+
+This repo's `App.kt` is the original monolith shell: `MaterialTheme { Surface { Column { … } } }`,
+no `Scaffold`, no insets. So the clipping is **pre-existing, not a regression** — and that is
+what makes it worth recording rather than shrugging at. Before the migration each screen was
+responsible for itself; after it, three features were rewritten to a contract the shell does not
+honour, promoted to `managedFeatures`, and graded strictly — with the app visibly broken at the
+top edge and every static gate green. `assembleDebug`, strict `archTest`, `kmpilot_check --all`
+at 0 errors, and iOS + desktop compiles all passed.
+
+#### The fix — decided 2026-08-07, NOT yet implemented. Pick this up and execute it.
+
+Surveyed the four shells first, because that decides the severity:
+
+| Shell | State |
+|---|---|
+| KMPilot (reference) | `XScaffold` + `windowInsetsPadding(safeDrawing)` — conforms |
+| `bookshelf` | `Scaffold` + `contentWindowInsets(0,0,0,0)` + `safeDrawing` — conforms |
+| `bookshelf-featuredir` | `Scaffold`, no explicit insets — relies on Scaffold's default `systemBars`; **runs fine** |
+| `T01P05-Monolith` | **no Scaffold, no insets at all** — the broken one |
+
+**Three valid shapes, one broken.** So the rule must detect *the absence of both mechanisms*,
+never grade the correctness of one — grading correctness flags `bookshelf-featuredir`, which
+works, and wrongly failing an already-promoted project is the failure this phase has now paid
+for twice (findings 1 and 18).
+
+**1. A repo-scoped check, modelled on `S3`.** Fires **once for the project**, not per feature:
+*the app shell hosts no `Scaffold`/`XScaffold` and applies no window insets, while its features
+use `XScreen`, which adds none — so nothing in this app provides the safe area.*
+
+Repo-scoped is the load-bearing detail, not a nicety. Attached per feature it becomes finding 1
+verbatim: a project-level fact repeated N times that no edit to any feature can clear, making
+every feature uncompletable. `S3` already establishes the pattern — reported outside the feature
+loop. Severity `warning`, not `error`.
+
+**2. A project-level `shell` step in the plan** that actually brings the shell up to the
+contract, routed to `integrator`, using `patterns.md`'s Case A / Case B code verbatim (it is
+given in full there, so this is a spec-driven edit, not a judgment call). Rank it with
+`hoist`/`extract` — **before** the migrates, so features are rewritten against a shell that
+already honours the contract instead of being promoted against a broken one.
+
+The obvious objection does not hold: **the migration already edits `App.kt`** — every carve
+rewrote its imports, and the Koin wiring touched `KmpilotModules.kt`. "Never edits your code" is
+*adopt's* promise, not the migration's; the clean phase rewrites working source by design.
+
+**Skippable when already satisfied** — same as a feature that already conforms getting `done`
+with "nothing to migrate", so `bookshelf` and KMPilot itself see no step at all.
+
+**Finding 22 — a step could be completed without ever being opened, and the report said `?`.**
+Caught by *reading the artifact the run produced*, not by any check: `MIGRATION-REPORT.md`
+printed `settings | migrated | ? → 0` while `authors` and `books` both showed `6 → 0`.
+
+`checkpoint` is skippable — nothing forces it, and going from `next` straight to editing is one
+command away, which is exactly what happened on `migrate-settings`. Two things are lost, and
+neither is recoverable afterwards: the step ran with **no restore point** (`refuse` and
+`restore` both rewind to the checkpoint, so for the whole rewrite there was nothing to rewind
+to), and `capture_regrade` never ran, so the feature's "before" counts are gone — the very
+symptom the regrade capture was built to remove, reappearing through a different door. `refuse`
+was taught to ask the tree in finding 5; `complete` was never taught to ask the ledger.
+Refusing unless `--force` is all that is left once the damage is done, and it stops it
+happening silently a second time.
+
+**Also fixed here: two rules had no description in the report.** The per-rule table renders
+`RULE_WAS.get(rule, "see kmpilot_check.py")` — a report telling its reader to go read the
+source. **S5** shipped that way with finding 8 and nobody noticed; **S6** did the same two
+findings later, which is what makes it worth a check rather than a habit, because the omission
+is invisible unless a migration happens to clear that exact rule. `kmpilot_report_test.py` now
+derives the expected set from `FEATURE_CHECKS` and fails on any rule with no blurb, so the next
+new rule cannot repeat it.
+
+**Finding 21 — the step brief is where behaviour silently changes, and nothing guards it.**
+Not a script bug: a hole in how the clean phase is *driven*. The orchestrator writes each
+rewrite pass's brief, and on `migrate-books` it described the screen as listing *"title, author
+and year"*. The original rendered title and author only — `firstPublishYear` was on the model
+and never displayed. The agent treated the brief as the spec, implemented it faithfully, added
+a year row plus an "Unknown year" fallback string, and **said so in its report**. A behaviour
+change entered a migration because the brief was written from memory rather than from the code.
+
+This is the risk the phase already names as the worst one — *"a rewrite that compiles but
+changes behaviour is silent"* — arriving through the one door nothing checks. Every guard in
+this phase watches the **result** (the checker, `verify`, promotion); nothing watches the
+**instruction**. The checker cannot catch it: the migrated feature conforms perfectly, and the
+extra row is exactly as rule-compliant as its absence.
+
+Two mitigations, both cheap, neither a script:
+
+- **Derive the brief from the file, not from recall.** `migrate-settings`'s brief was written
+  after re-reading `SettingsScreen.kt`, and it enumerates the two switches, the four-state
+  stats text and the refresh button, with an explicit *"do not add, drop or restyle anything"*.
+  It also pre-empts a plausible-but-wrong reading — routing the whole screen through
+  `AppLoadingState` would hide the toggles while stats load, a regression the rules would
+  otherwise applaud.
+- **Ask the agent to report behaviour deltas explicitly.** Both agents that were asked did, and
+  that is the only reason this was caught at all rather than shipping as "migrated".
+
+`phase-3-clean.md` should say this where it hands work to an agent: the work list is the
+checker's, but the **behaviour contract is the existing code**, and a brief that paraphrases it
+is a brief that can change it.
+
+**Finding 18 — I3 could not see a feature registered through adopt's own Koin bootstrap.**
+Found the moment the first feature was actually wired: the app built, Koin resolved the
+feature, the screen worked — and I3 still reported `authorsModule` unregistered.
+
+I3 read the `modules(...)` call **in `initKoin.kt` only**. When a project has no `startKoin`,
+`install.sh --adopt` writes one that reads `modules(kmpilotModules)`, with the list built in a
+**sibling** file:
+
+```kotlin
+val kmpilotModules: List<Module> = listOf(commonModule, dataModule, authorsModule)
+```
+
+A feature added to that list is registered in every sense that matters, but a single-file
+textual match at the call site sees nothing. And because no edit to the *feature* can clear it,
+this is finding 1's unreachable-bar failure again — `complete` refuses, `--force` follows,
+promotion then refuses the forced sign-off — on **the scaffold adopt itself writes**. Fixed by
+following **one hop**: an identifier inside `modules(...)` that resolves to a `val` in the app
+module is searched too. One hop only, and only within the app module — enough for the
+aggregation shape everyone writes, short of pretending to resolve arbitrary Kotlin.
+
+The guard needed two fixture changes, and the second is the interesting one: the checker's
+`clean` feature is now registered *through* such a list (so the hop is exercised at all), and
+`initKoin.kt` gained a deliberate **`import …probe.di.probeModule` that is never added to any
+list** — a half-finished registration. Without that trap, widening the hop to "the name appears
+anywhere in the app module" passed every test.
+
+**Finding 19 — the `ui-layer` agent's standing instructions mandate a file this project must
+not have.** They require `presentation/navigation/{Feature}Navigation.kt` (a Route plus a
+`NavGraphBuilder` extension) for every feature. This repo navigates by hoisted state with no
+NavHost — the architecture the checker already treats as *advisory* rather than a defect
+(finding 1). Generating one here would be dead code pulling in `androidx.navigation.compose`,
+which nothing else in the app uses. The agent flagged the conflict and followed the brief's
+layout instead of its own default, which is the right outcome but only because the brief
+happened to say so. **Recorded, not yet fixed:** the agent instructions need an explicit
+carve-out for hoisted-state navigation, or the next agent running this step cold will create
+the file.
+
+**Finding 20 — `buildFileSpec` is right for a carved module and short for a migrated one.**
+The three settings it carries (JVM level, `androidResources`, serialization plugin) are the
+crash-prevention ones and they held. But a feature that is then *rewritten* to KMPilot's rules
+needs three more the spec never mentions: `koin-compose-viewmodel` (for `koinViewModel()`),
+`compose.ui.tooling.preview` in `commonMain`, and `androidRuntimeClasspath(compose.ui.tooling)`
+— the last two required by the Previews rule in `patterns.md`. `:core:common` exports
+`koin-core` but not `koin-compose-viewmodel`, so nothing surfaces until compile time. Same
+shape as finding 16: the dependency the pipeline's own features get from elsewhere is the one
+a migrated feature has to be handed.
+
+**Finding 17 — the migration's completion bar could be met without migrating the feature.
+New check S6.** The most consequential finding in the phase: not a crash, a *false pass*.
+
+Half this checker's rules are gated on the documented layout. `check_r3` and `check_r11a` only
+look `under(src, "presentation")`; `check_r12`, `check_r13` and `check_s1` only look
+`under(src, "ui")`. A feature whose sources sit flat in the package root therefore has **none**
+of them evaluated — they do not pass, **they never run**.
+
+That is harmless for a feature KMPilot generated, which is born in the right shape. It is not
+harmless for a migrated one, because a project being migrated arrives flat *by definition* —
+and the migration's completion bar is *zero actionable findings*. The first carved feature
+graded **5 findings** (R11b, R8, R5×2, I3) while its screen still assigned `_state.value =`,
+hardcoded every visible string, kept the `*UiState.kt` Rule 11 forbids, and called a throwing
+repository with no interface. Nothing in the checker required `*Screen.kt` to live under
+`presentation/ui/`, so an agent could clear all five, report **0**, and the feature would be
+promoted to `managedFeatures` and graded strictly forever — having never been migrated. The
+migration would sign off work it never did, in a file the user did not write.
+
+**S6 is therefore the rule that makes the other rules reachable**, and it is an `error`:
+
+| Call | Why |
+|---|---|
+| **per screen, not "some screen is placed right"** | a feature may own a secondary screen (the documented `kind: screen` case), and those live under `presentation/ui/` too. Checking that *one* is placed correctly lets the second sit anywhere and take R3/R12/R13/S1 out of scope with it |
+| **routed to the `structure` cluster** (`ui-layer`) | and it leads that cluster in practice: until the screen moves, every other pass is working against a partial picture of the feature. The plan self-test caught the routing gap immediately — an unrouted rule surfaces as an `other` cluster, which is the safety net doing its job |
+| **no grandfathering** | both already-migrated repos (`bookshelf`, `bookshelf-featuredir`) were checked first: every one of their screens is already at `presentation/ui/*Screen.kt`. They satisfied this by **convention**, never by enforcement — which is exactly how it went unnoticed |
+
+Verified: KMPilot's own six features stay **0 errors 0 warnings** at 21 checks; the checker
+self-test gained a flat `StrayScreen.kt` in its probe fixture, because **the shape had to be in
+the fixture for the rule to be testable at all** — without it `s6-never-fires` survived, the
+familiar assertion-that-cannot-fail. Both S6 mutations (never fires / fires on a conforming
+feature) are now caught.
+
+**Finding 16 — the vendored catalog could not express a dependency every carved feature
+needs.** `kmpilotLibs` carries `lifecycle-viewmodel` and `lifecycle-runtime-compose` but **not**
+`lifecycle-viewmodel-compose`, so the first carved module failed with *"Unresolved reference
+`viewModel`"*. KMPilot's own features never hit it — they resolve ViewModels through Koin and
+never call the CMP `viewModel()` factory. But a project being migrated has **not** been
+Koin-wired yet, and every one of its screens calls it: that is the state a migration starts
+from, by definition. So the one artifact the pipeline's own code never needs is the one every
+migration needs first.
+
+Fixed where the two sibling artifacts already live: the alias is in the catalog, and
+`:core:common` exports it `api` exactly as it already exports the other two. Every feature
+module depends on `:core:common`, so this is fixed once rather than in each carved build file
+— and `carve-books` / `carve-settings` never hit it. Found by the `integrator` agent running
+the step, which is the half of the pipeline a fixture cannot exercise.
+
+**Finding 15 — `install.sh --adopt` produced a project that could not configure Gradle at all,
+on the single-module KMP shape.** The most serious finding in the phase so far, and it is an
+**adopt** bug (Phase 2) that only a Phase-6 test bed could surface — because every adopt test
+repo has a *split* topology and this one does not.
+
+`T01P05-Monolith`'s `composeApp` is one module that is both the KMP module and the Android
+application. After `--adopt`, **`./gradlew help` failed**:
+
+```
+Error resolving plugin [id: 'com.android.kotlin.multiplatform.library', version: '9.0.1']
+> already on the classpath with an unknown version, so compatibility cannot be checked.
+```
+
+The first diagnosis was wrong and worth recording, because it is the plausible one: AGP 9
+forbids `com.android.application` + `org.jetbrains.kotlin.multiplatform` in one module, the
+project set Google's documented bypass (`android.newDsl=false`), and that bypass looked
+incompatible with the new KMP-Android-library plugin the vendored core uses. That reading
+implied a real deadlock and pointed at either a refusal or a second, legacy-flavoured core.
+
+**Neither was needed.** The actual cause is a *version-declaration* conflict. Every KMP
+project's root build file declares its Android plugins `apply false`; once any `com.android.*`
+plugin is named there, the whole AGP artifact is on the classpath — **including the plugins the
+root did not name**. A vendored core that then requests
+`com.android.kotlin.multiplatform.library` *with a version* is refused. Repos with a separate
+android app module happen to name **both** plugins in their root, so both versions are known
+and the versioned alias resolves; a single-module project names only
+`com.android.application`, so the KMP-Android-library plugin arrives untagged. That is the
+entire difference, and it is why Phase 2's four test repos never saw it.
+
+Fixed by requesting the plugin **without a version** when the host root already puts AGP on the
+classpath (`adopt_root_declares_agp`, resolving aliases through the host's own catalog rather
+than matching on alias spelling, which every project chooses differently). It binds to whatever
+AGP the host resolved, and the versions cannot drift because only one AGP is ever on the
+classpath.
+
+| Shape | before | after |
+|---|---|---|
+| single-module KMP + application | `help` fails | **`assembleDebug` green** |
+| separate android app module | green | green — matrix 74/0, fixture rebuilt through adopt |
+
+**Directed by the user, 2026-08-07:** *support everything as much as possible — if it is
+migratable, migrate it; add capability instead of refusing.* Refusal was the smaller change and
+the wrong one; the goal is for KMPilot to accept all project kinds, not to require its own
+structure. Recorded as a standing principle, not a one-off call.
+
+**Finding 14 — `mutation_audit.py` could not tell a caught mutation from an already-broken
+guard.** `guard_caught()` runs the guard under mutation and reports `caught` on a non-zero
+exit. It never asked whether the guard was **green before**. A guard that is already failing
+stays failing under mutation, so every mutation registered against it reads as caught — the
+audit reporting success while proving nothing. This is not hypothetical: it happened twice
+while writing the carve controls, and both times the audit said `caught`.
+
+That matters more than an ordinary bug, because `mutation_audit.py` **is** the evidence for the
+Stage B exit criterion *"every variant proven able to fail"*. The criterion's own wording —
+*"the only proof is breaking the code and watching the guard go red"* — is false when the guard
+was red already. `run()` now checks each guard on unmutated code first (cached, since several
+mutations share a guard) and reports `INVALID` with a non-zero exit rather than a green tick.
+
+Two decorative assertions it immediately caught, both written in this session:
+
+- **`control-carve-app-shell-only` could not fail.** It leaned on `App()` in the root package.
+  Delete the `*Screen` filter and that package normalises to the feature name `notes`, collides
+  with the existing `:feature:notes`, and is swallowed by the collision guard — so the reject
+  never fired. The shell composable now sits in its own `shell` package, which collides with
+  nothing.
+- **`control-jvm-target-core` could not fail, for a subtler reason.** The obvious assertion —
+  *the core is never reported as below the core* — is unfalsifiable, because the note loop
+  **skips `core-kmpilot` entirely**. A wrong bar can never surface as a note on the core. What
+  a repo-wide max actually does is flag modules that are **fine**, so the control now spans
+  three levels: `:shared` at 24 (above), `:core:model` at 21 (exactly level — silent on the
+  correct bar, flagged on a repo-wide one) and `:core:netcall` at 11 (below, so the message can
+  be read and asserted to name **21**, the core's level, not 24).
+
+Verified: **8 new matrix variants, 5 of them negative controls** — `carve-monolith`,
+`control-carve-app-shell-only`, `control-carve-core-designsystem` (the design system's own
+`XScreen` must never be carved — `COMPOSABLE_SCREEN` is `\w*Screen$`), `carve-stray-screen`,
+`carve-name-collision`, `jvm-target-app-module`, `control-jvm-target-core`,
+`control-android-resources-application` — each with a registered mutation, and each mutation
+watched failing against a guard first proven green. `migrate-matrix.sh` is **74 variants**.
+
 ### Landed 2026-08-07 — the two report bugs from the `bookshelf` run
 
 Both were recorded rather than fixed when that run closed, and neither needs a repo to reproduce.
@@ -1041,10 +1401,10 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `scripts/kmpilot_report_test.py` | ✅ **new** — integrate-phase self-test (needs git) | stripped on install |
 | `scripts/kmpilot_discover_test.py` | ✅ **new** — discovery self-test | stripped on install |
 | `scripts/kmpilot_plan_test.py` | ✅ **new** — plan self-test | stripped on install |
-| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1); the nav-host fallback matches wrappers so `XNavHost` no longer suppresses I4 (finding 6); **new check S5** — a module declaring `@Serializable` must apply the serialization plugin (finding 8). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
+| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1); the nav-host fallback matches wrappers so `XNavHost` no longer suppresses I4 (finding 6); **new check S5** — a module declaring `@Serializable` must apply the serialization plugin (finding 8); **new check S6** — a feature's `*Screen.kt` must live under `presentation/ui/`, because R3/R11a/R12/R13/S1 are all path-gated on that layout and a flat feature has them **skipped, not passed** (finding 17). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
 | `.claude/skills/_shared/patterns.md` | migration entry alongside create/modify | OVERRIDE |
 | `CLAUDE.md` | mandatory-skill table gains both commands | TIER1 (merged) |
-| `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715) | not delivered |
+| `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715); ✅ `adopt_root_declares_agp()` — the vendored core binds to the host's AGP without naming a version when the root already put it on the classpath (step 9 finding 15) | not delivered |
 | `ADOPTING.md` | same rename (:81); compatibility note | stripped on install |
 | `scripts/make-nonconforming-project.sh` | **new** — Stage B fixture: several features + shared code | stripped on install |
 | `scripts/make-android-target.sh` | **new** — Stage C Android fixture (Compose + Hilt + Retrofit) | stripped on install |
@@ -1094,7 +1454,9 @@ commit only `.claude/`.
    named, not written — `/audit-spec` stays the one spec writer. Resume support was already the
    ledger: `finish` is idempotent and `verify report` is what says a run is actually closed.)*
 9. Run against `bookshelf-featuredir` ✅, `bookshelf` ✅, `Kickoff26` ✅ (refuses, correctly), and
-   the projects you build by hand ← **next**. Transcript of each goes in the PR.
+   the projects you build by hand ← **in progress**. `T01P05-Monolith` (tier-1 shape ★05, the
+   first hand-built bed) is mid-run: 4 of 8 steps done, the **`carve` step** built for it, and
+   findings 10–17 out of it. Transcript of each goes in the PR.
 
 **Stage C** — only after Stage B is confirmed
 
@@ -1133,11 +1495,12 @@ commit only `.claude/`.
       the matrix is green — green is what a decorative assertion also looks like.** Step 9
       finding 9 found a negative control that could never fail and had been passing since the
       day it landed; step 8 found six more of the same shape. The only proof is breaking the
-      code and watching the guard go red. `scripts/mutation_audit.py` does that and
-      `--coverage` prints the honest state: **as of 2026-08-06, 5 of 66 variants have a
-      registered mutation — 61 are unverified.** Closing this criterion means registering a
-      mutation per variant and every one of them being caught, which is real remaining work,
-      not a formality.
+      code and watching the guard go red — **against a guard that was green to begin with**,
+      which the harness did not check until step 9 finding 14. `scripts/mutation_audit.py`
+      does both now, and `--coverage` prints the honest state: **as of 2026-08-07, 13 of 74
+      variants have a registered mutation — 61 are unverified.** Closing this criterion means
+      registering a mutation per variant and every one of them being caught, which is real
+      remaining work, not a formality.
 - [ ] Phase 3 unpark decision recorded in `PARKED.md` and the README status table.
 
 **Stage C**

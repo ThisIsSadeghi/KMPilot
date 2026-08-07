@@ -67,6 +67,36 @@ Phase 6's central safety property is that a human confirms the plan before anyth
 | `android-locked` | Android-only APIs in non-Android source sets → refused |
 | `no-entry-point` | no top-level `@Composable fun` → refused |
 | `owned` | KMPilot wrote it (template / pipeline-source role) and it has findings → `/modify-feature` work, not migration |
+| `name-collision` | a carve candidate whose `feature/{name}` is already taken → refused |
+
+### Features that are packages, not modules
+
+A feature does not have to be a module yet. `location: "in-module"` is a screen package
+living **inside** another module — the monolith case, where one `composeApp` holds the app
+shell, the networking and three unrelated screens. `classify_kind` reaches `app` before it
+ever asks whether the module holds screens, so without this such a project inventoried as
+**zero features** and planned a single `report` step: a migration reporting success on a
+project it never touched.
+
+These rows carry `owner`, `ownerDir`, `package` and `sourceDirs` alongside the usual fields,
+and their `gradlePath` (`:feature:{name}`) is the path the module **will** have — nothing on
+disk answers to it yet. They are ungradable for exactly the reason a root-level feature is,
+and get a `carve` step instead of a `relocate`.
+
+Two limits keep it honest, both pinned by negative controls:
+
+- only `app` / `app-android` modules are searched — the two kinds that can never become a
+  `feature` themselves. A `shared` module holding screens already *is* a feature.
+- **`core-kmpilot` is never searched.** `COMPOSABLE_SCREEN` is `\w*Screen$`, so the design
+  system's own `XScreen` reads as a screen root; carving `:core:designsystem` would take the
+  vendored core apart.
+
+Shared code the carved packages reach — a hand-rolled `ApiClient`, a DI container — appears
+in `inFeatureShared[]` owned by the app module, and earns an `extract` step that runs first.
+The declaring-file set is closed over the owner's **own** references, including same-package
+ones that carry no `import` statement: a screen importing only `AppContainer` still has to
+take the `ApiClient` that container holds, or the hoisted file references a module `:core:*`
+is not allowed to depend on.
 
 ### Tier proposals
 
@@ -90,6 +120,7 @@ A refusal is a **pass**: report it and move on. Three kinds:
 | Android-locked feature | Android-only imports from a non-Android source set |
 | No screen entry point | no top-level `@Composable fun` anywhere in the module |
 | Unhoistable shared code | Android-only APIs in shared code, blocking its consumers |
+| Carve name collision | `feature/{name}` is already taken, or two carve packages normalise to the same name — carving onto an occupied path would merge two features into one directory |
 
 **A cross-feature dependency is not a refusal.** At project scope that is precisely what hoisting resolves — it is reported as a `cross-feature-dependency` note plus an `inFeatureShared` row with a tier proposal.
 
@@ -107,6 +138,7 @@ Likewise, an `android.content.Context` import inside **`androidMain`** is Rule 1
 | Note | Meaning |
 |---|---|
 | `feature-outside-featuredir` | a feature not under `feature/` — ungradable until it moves |
+| `features-inside-module` | screen packages inside a non-feature module — each earns a `carve` step |
 | `missing-desktop-target` | no desktop/jvm target; every `expect` needs a desktop `actual` or the build breaks |
 | `cross-feature-dependency` | features never depend on features — hoist first |
 | `dependency-cycle` | not orderable as-is; hoisting breaks it. Cycle members are held **out** of `order[]` rather than linearised |

@@ -38,6 +38,11 @@ mokkery = "3.4.0"
 [libraries]
 coreKtx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-viewmodel = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
+# The CMP `viewModel()` composable factory. KMPilot's own features resolve their
+# ViewModels through Koin and never call it — but a project being migrated has not
+# been Koin-wired yet, and its screens all do. Without this the very first carved
+# feature fails with "Unresolved reference 'viewModel'".
+androidx-lifecycle-viewmodel-compose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-runtime-compose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 kotlinCollection = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinxCollections" }
 activityCompose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }

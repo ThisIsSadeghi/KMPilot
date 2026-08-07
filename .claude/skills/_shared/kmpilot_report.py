@@ -90,6 +90,8 @@ RULE_WAS = {
     "S2": "composables outside `components/`",
     "S3": "generic core code importing its module's `.app` tier",
     "S4": "the deprecated `@Preview` import",
+    "S5": "`@Serializable` with no serialization plugin — compiles, then crashes",
+    "S6": "the screen outside `presentation/ui/`, where half the rules cannot see it",
     "I1": "not included in `settings.gradle.kts`",
     "I2": "not a dependency of the app module",
     "I3": "not registered in `initKoin`",

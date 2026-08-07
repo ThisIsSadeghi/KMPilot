@@ -277,6 +277,22 @@ def main() -> int:  # noqa: C901 — a linear script; splitting it would hide th
         )
         dirty_file.write_text(dirty_before)
 
+        # ── a step cannot be completed without ever being opened ────────────
+        # `checkpoint` is skippable — nothing forces it, and going from `next` straight
+        # to editing is one command away. A step completed that way ran with **no
+        # restore point** (`refuse`/`restore` both rewind to the checkpoint), and its
+        # before-counts are gone: `capture_regrade` runs at `checkpoint`, and once the
+        # rewrite has landed the findings it would have recorded no longer exist. The
+        # report then prints `? → 0` for exactly the feature that needed the most work.
+        # Both losses are unrecoverable at this point, so the only thing left to do is
+        # refuse rather than let it happen silently again.
+        unopened = mig(root, "complete", "relocate-oldscreen")
+        f.want(
+            unopened.returncode != 0 and "never opened" in unopened.stderr,
+            f"complete must refuse a step that was never checkpointed: "
+            f"{unopened.stdout[:200]}{unopened.stderr[:200]}",
+        )
+
         # ── verify is earned, not asserted ──────────────────────────────────
         mig(root, "checkpoint", "relocate-oldscreen")
         unfinished = mig(root, "verify", "relocate-oldscreen")

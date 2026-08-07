@@ -90,11 +90,41 @@ def step_status(root: Path, step_id: str) -> str:
     return {s["id"]: s for s in ledger(root)["steps"]}.get(step_id, {}).get("status", "?")
 
 
+def rule_blurb_coverage(f: "Failures") -> None:
+    """Every rule the checker can emit needs a one-line "what it was" for the report.
+
+    A rule with no entry renders as the literal string `see kmpilot_check.py` in the
+    per-rule table — a report telling its reader to go read the source. S5 shipped that
+    way with finding 8 and nobody noticed until S6 did the same thing two findings
+    later, which is what makes this worth a check rather than a habit: the omission is
+    invisible unless a migration happens to clear that exact rule.
+    """
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "kc", root / ".claude/skills/_shared/kmpilot_check.py")
+    kc = importlib.util.module_from_spec(spec)
+    sys.modules["kc"] = kc
+    spec.loader.exec_module(kc)
+    spec2 = importlib.util.spec_from_file_location(
+        "kr", root / ".claude/skills/_shared/kmpilot_report.py")
+    kr = importlib.util.module_from_spec(spec2)
+    sys.modules["kr"] = kr
+    spec2.loader.exec_module(kr)
+
+    emitted = {rule for rule, _fn in kc.FEATURE_CHECKS if rule != "I"}
+    emitted |= {"I1", "I2", "I3", "I4", "S3"}
+    missing = sorted(emitted - set(kr.RULE_WAS))
+    if missing:
+        f.add(f"no RULE_WAS blurb for {', '.join(missing)} — the report would print "
+              "'see kmpilot_check.py' at the reader instead of saying what the rule was")
+
+
 def main() -> int:  # noqa: C901 — a linear script; splitting it would hide the sequence
     f = Failures()
     if subprocess.run(["git", "--version"], capture_output=True).returncode != 0:
         print("git is not available — this suite needs it")
         return 1
+    rule_blurb_coverage(f)
 
     with tempfile.TemporaryDirectory() as tmp:
         fixture = Fixture(Path(tmp))

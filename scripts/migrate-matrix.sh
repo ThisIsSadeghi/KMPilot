@@ -1432,6 +1432,219 @@ MENTION
 fi
 
 
+# ── carve: features that are packages inside another module ─────────────────
+#
+# The monolith shape, from the first hand-built test bed. `classify_kind` reaches
+# `app` before it ever asks whether a module holds screens, and there is no path
+# from `app` to `feature` — so a project keeping all three of its screens inside
+# `composeApp` inventoried as ZERO features and planned a single `report` step: a
+# migration reporting success on a project it never touched. That is exactly what
+# the shape sweep's invariant forbids, and it was invisible to that invariant
+# because the invariant can only check features it can SEE.
+
+# stray_screen <dir> <package-leaf> <fun-name> — put a top-level @Composable *Screen
+# inside the app module, in a package no feature module owns. That is what a monolith
+# looks like to discovery.
+stray_screen() {
+    local dir="$1" leaf="$2" fn="$3"
+    mkdir -p "$dir/shared/src/commonMain/kotlin/$PKG_PATH/$leaf"
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/$leaf/$fn.kt" <<EOF
+package com.acme.notes.$leaf
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun $fn() {
+    Text("$fn")
+}
+EOF
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: $leaf lives inside the app module" >/dev/null 2>&1
+}
+
+# set_jvm_target <build-file> <level> — declare a bytecode target on a module that
+# does not name one. No module in the base fixture declares a JVM level at all.
+set_jvm_target() {
+    python3 - "$1" "$2" <<'PY'
+import sys
+path, level = sys.argv[1], sys.argv[2]
+text = open(path).read()
+text = text.replace("kotlin {", "kotlin {\n    androidTarget {\n"
+                    f"        compilerOptions {{ jvmTarget.set(JvmTarget.JVM_{level}) }}\n    }}\n", 1)
+open(path, "w").write(text)
+PY
+}
+
+commit_reshape() {
+    git -C "$1" add -A >/dev/null 2>&1
+    git -C "$1" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: $2" >/dev/null 2>&1
+}
+
+if matches carve-monolith; then
+    variant carve-monolith "a screen package inside the app module is a feature nobody split out"; dir="$VDIR"
+    stray_screen "$dir" reader ReaderScreen
+    invariant "$dir"
+    expect '^feature  :feature:reader  portable  location=in-module  owner=:shared' \
+        "a screen package inside the app module is found as a feature"
+    expect '^note  features-inside-module  :shared' \
+        "the user is told the app module is holding features"
+    expect_plan '^step .* carve .* :feature:reader ' \
+        "it earns a carve step — the module has to be created, not moved"
+    expect_plan '^step .* migrate .* :feature:reader .*depends=[^ ]*carve-reader' \
+        "the rewrite waits for the module to exist"
+    finish
+fi
+
+if matches control-carve-app-shell-only; then
+    variant control-carve-app-shell-only "NEGATIVE CONTROL: the app module holds only the shell"; dir="$VDIR"
+    # Only `*Screen`-named composables count as a screen root. An app module is full of
+    # ordinary top-level composables — `App()` itself, hosts, wrappers — and counting
+    # them would carve a module out of every one.
+    #
+    # The shell composable goes in its OWN package on purpose. The first version of this
+    # control relied on `App()` in the root package and COULD NOT FAIL: with the `*Screen`
+    # filter deleted, the root package normalises to the feature name `notes`, collides
+    # with the existing :feature:notes, and is swallowed by the collision guard. It passed
+    # for the wrong reason. `shell` collides with nothing, so dropping the filter produces
+    # a carve candidate and this reject fires.
+    rm -f "$dir/shared/src/commonMain/kotlin/$PKG_PATH/notes/NoteListScreen.kt"
+    mkdir -p "$dir/shared/src/commonMain/kotlin/$PKG_PATH/shell"
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/shell/ShellHost.kt" <<'EOF'
+package com.acme.notes.shell
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun ShellHost() {
+    Text("shell")
+}
+EOF
+    commit_reshape "$dir" "app module holds only the shell"
+    invariant "$dir"
+    reject '^feature  .*location=in-module' \
+        "an app module with no screen packages must produce no carve candidate"
+    reject '^step .* carve ' "and therefore no carve step"
+    finish
+fi
+
+if matches control-carve-core-designsystem; then
+    variant control-carve-core-designsystem "NEGATIVE CONTROL: the design system's XScreen is not a feature"; dir="$VDIR"
+    # COMPOSABLE_SCREEN is `\w*Screen$`, so :core:designsystem's own `XScreen` reads as a
+    # screen root. Carving the vendored core apart is the worst false positive available
+    # here — it would take the design system out from under every feature at once.
+    invariant "$dir"
+    reject '^feature  .*location=in-module.*owner=:core' \
+        "a vendored core module is never a carve host"
+    finish
+fi
+
+if matches carve-stray-screen; then
+    variant carve-stray-screen "a screen in the app module belonging to an existing feature's package"; dir="$VDIR"
+    # The base fixture ships exactly this: :shared declares com.acme.notes.notes, which is
+    # :feature:notes' package. It is a stray FILE, not a feature nobody split out —
+    # carving a second module would give one feature two rows, two migrate steps and two
+    # different answers about its status.
+    invariant "$dir"
+    expect '^note  screen-outside-its-feature  :shared → :feature:notes' \
+        "a stray file is reported as a stray file, not as a new feature"
+    reject '^feature  :feature:notes  .*location=in-module' \
+        "it must NOT become a second feature row for a path that already has one"
+    [[ "$(grep -cE '^feature  :feature:notes ' <<<"$OUT")" == "1" ]] || \
+        fail "features[] has more than one row for :feature:notes — every consumer keys on gradlePath"
+    finish
+fi
+
+if matches carve-name-collision; then
+    variant carve-name-collision "a carve package whose feature/{name} is already taken"; dir="$VDIR"
+    # `com.acme.notes.extra.portable` normalises to `portable`, and :feature:portable
+    # already exists with a different package. Carving onto an occupied path would merge
+    # two unrelated features into one directory.
+    mkdir -p "$dir/shared/src/commonMain/kotlin/$PKG_PATH/extra/portable"
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/extra/portable/PortableScreen.kt" <<'EOF'
+package com.acme.notes.extra.portable
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun PortableScreen() {
+    Text("collides")
+}
+EOF
+    commit_reshape "$dir" "a carve name that collides"
+    invariant "$dir"
+    expect '^refusal  :shared \(com.acme.notes.extra.portable\)  carve  ' \
+        "the collision is refused with a reason, not planned quietly"
+    [[ "$(grep -cE '^feature  :feature:portable ' <<<"$OUT")" == "1" ]] || \
+        fail "a collision emitted a second :feature:portable row — that path would get two migrate steps"
+    finish
+fi
+
+# ── build settings are facts about a MODULE, not about a feature ────────────
+#
+# These notes used to live inside the per-feature loop, so a project with no feature
+# modules yet — precisely the monolith — was told nothing about the settings that
+# would break its migration. `jvm-target-below-core` is the expensive one: a compile
+# failure the migration itself introduces, which nothing else can catch, because
+# verification is static by design.
+
+if matches jvm-target-app-module; then
+    variant jvm-target-app-module "the app module compiles below the core's JVM level"; dir="$VDIR"
+    set_jvm_target "$dir/shared/build.gradle.kts" 11
+    commit_reshape "$dir" "app module at JVM 11"
+    invariant "$dir"
+    expect '^note  jvm-target-below-core  :shared' \
+        "a non-feature module below the core's JVM level is reported — it cannot inline setState"
+    finish
+fi
+
+if matches control-jvm-target-core; then
+    variant control-jvm-target-core "NEGATIVE CONTROL: the core is never below itself"; dir="$VDIR"
+    # Three modules make this control able to fail, and none of them is obvious.
+    #
+    # The bar is read off `:core:*` specifically, never off the highest module in the
+    # repo — a host on a NEWER JVM inlines from core perfectly well, and a repo-wide max
+    # would report the core as below itself. But `core-kmpilot` is SKIPPED by the note
+    # loop, so a wrong bar can never appear as a note on the core: asserting only that is
+    # unfalsifiable. What a wrong bar actually does is flag modules that are FINE.
+    #
+    #   :shared      → 24, above the core, to move a repo-wide max off 21
+    #   :core:model  → 21, exactly LEVEL with it. Correct bar 21 → silent. Repo-wide max
+    #                  24 → suddenly "below the bar" and flagged.
+    #   :core:netcall→ 11, genuinely below, so the note's MESSAGE can be read at all.
+    #
+    # Finding 2's own unit test hit this hole from the other side; the matrix had it too.
+    set_jvm_target "$dir/shared/build.gradle.kts" 24
+    set_jvm_target "$dir/core/model/build.gradle.kts" 21
+    set_jvm_target "$dir/core/netcall/build.gradle.kts" 11
+    commit_reshape "$dir" "one module above the core, one level with it, one below"
+    invariant "$dir"
+    reject '^note  jvm-target-below-core  :core:model' \
+        "a module LEVEL with the core is not below it — a repo-wide max would flag it"
+    reject '^note  jvm-target-below-core  :shared' \
+        "a module on a NEWER JVM than the core is not below it"
+    expect '^note  jvm-target-below-core  :core:netcall .*modules are JVM 21' \
+        "the level named in the message is the CORE's, not the repo's highest"
+    finish
+fi
+
+if matches control-android-resources-application; then
+    variant control-android-resources-application "NEGATIVE CONTROL: an AGP application module is not a library"; dir="$VDIR"
+    # `androidResources.enable` is the KMP androidLibrary DSL. An application module has
+    # no such block and does not need one — it is the terminus resources propagate TO.
+    # Adopt writes the flag into every vendored core unconditionally, so "does this
+    # project's core enable it?" is true in EVERY adopted project and cannot tell the two
+    # topologies apart on its own.
+    invariant "$dir"
+    reject '^note  android-resources-not-enabled  :app' \
+        "an AGP application module must not be told to add a block it cannot have"
+    finish
+fi
+
 echo
 echo "${DIM}────────────────────────────────────────────────────────────${OFF}"
 echo "${BOLD}$PASSES passed · $FAILURES failed${OFF}"

@@ -56,6 +56,11 @@ kotlin {
                 implementation(libs.kotlinxSerialization)
                 api(libs.androidx.lifecycle.viewmodel)
                 api(libs.androidx.lifecycle.runtime.compose)
+                // `api`, like its two siblings above: a migrated feature that has not
+                // been Koin-wired yet still calls the CMP `viewModel()` factory, and
+                // every feature module already depends on :core:common. Exporting it
+                // here fixes that once instead of in every carved build file.
+                api(libs.androidx.lifecycle.viewmodel.compose)
 
                 api(libs.koin.core)
                 implementation(libs.koin.compose)

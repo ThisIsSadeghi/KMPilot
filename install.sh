@@ -453,6 +453,10 @@ adopt_has() {  # adopt_has <extended-regex> — is it anywhere in the build conf
 # breaking someone's wasm or macOS target silently is the worst outcome there is.
 UNSUPPORTED_TARGETS=""
 WANTS_IOS_X64=no
+# Set in adopt_vendor_core from adopt_root_declares_agp: whether the target's root
+# build file already puts AGP on the build classpath, which decides whether the
+# vendored core may name a version for the KMP-Android-library plugin.
+AGP_ON_ROOT_CLASSPATH=no
 detect_targets() {
     local files=() f found
     while IFS= read -r f; do files+=("$f"); done < <(adopt_build_files)
@@ -1256,6 +1260,47 @@ ensure_trailing_newline() {
 # compileSdk / minSdk / JVM target, and on its `libs` catalog. An adopted repo
 # has neither, and its root build is not ours to edit — so each vendored module
 # is rewritten to configure itself and to read the kmpilotLibs catalog.
+# Does the target's ROOT build file already put AGP on the build classpath?
+#
+# Every KMP project's root declares its Android plugins `apply false` so the
+# subprojects share one classloader. Once any `com.android.*` plugin is declared
+# there, the whole AGP artifact is on the classpath — including the plugins the
+# root did NOT name. A vendored core module that then requests
+# `com.android.kotlin.multiplatform.library` **with a version** is refused:
+#
+#   Error resolving plugin [id: 'com.android.kotlin.multiplatform.library', version: '9.0.1']
+#   > already on the classpath with an unknown version, so compatibility cannot be checked.
+#
+# Which is why an app module that is BOTH `com.android.application` and KMP — the
+# single-module shape — could not configure after adoption at all: its root names
+# only `com.android.application`, so the KMP-Android-library plugin arrives
+# untagged. Projects with a separate android app module happen to name both, so
+# their versions are known and the versioned alias resolves. That is the whole
+# difference, and it is why this went unnoticed through Phase 2.
+#
+# Requesting the plugin without a version binds it to whatever AGP the host
+# already resolved — correct in both shapes, and the versions cannot drift because
+# there is only ever one AGP on the classpath.
+adopt_root_declares_agp() {
+    local root_build="build.gradle.kts"
+    [[ -f "$root_build" ]] || return 1
+    # A literal id, the unambiguous case.
+    grep -qE '\bid\s*\(\s*"com\.android\.' "$root_build" && return 0
+    # Or a catalog alias whose entry resolves to a com.android.* plugin. Resolved
+    # through the host's own catalog rather than matched on alias spelling, which
+    # every project picks differently (androidKmpLibrary, androidMultiplatformLibrary…).
+    local catalog="gradle/libs.versions.toml" alias_name
+    [[ -f "$catalog" ]] || return 1
+    while read -r alias_name; do
+        [[ -n "$alias_name" ]] || continue
+        # Catalog aliases normalise - and _ to . in the accessor; match either form.
+        local pattern; pattern="$(printf '%s' "$alias_name" | sed 's/\./[-_.]/g')"
+        grep -qE "^[[:space:]]*${pattern}[[:space:]]*=.*id[[:space:]]*=[[:space:]]*\"com\.android\." \
+            "$catalog" && return 0
+    done < <(sed -n 's/.*alias(\([A-Za-z][A-Za-z0-9_]*\)\.plugins\.\([A-Za-z0-9_.]*\)).*/\2/p' "$root_build")
+    return 1
+}
+
 adopt_rewrite_core_builds() {
     local m f cs ms
     cs="${TGT_COMPILE_SDK:-$(sed -n 's/^android-compileSdk = "\([0-9]*\)".*/\1/p' "$STAGE/gradle/libs.versions.toml" | head -n1)}"
@@ -1266,6 +1311,12 @@ adopt_rewrite_core_builds() {
         # `libs.` → `kmpilotLibs.` (BSD sed has no \b; every occurrence is
         # preceded by `(` or whitespace)
         sedi 's|(libs\.|(kmpilotLibs.|g; s| libs\.| kmpilotLibs.|g' "$f"
+        # See adopt_root_declares_agp: when the host root already put AGP on the
+        # classpath, asking for it again *with a version* is an error, not a
+        # duplicate. Bind to what is already there instead.
+        if [[ "$AGP_ON_ROOT_CLASSPATH" == "yes" ]]; then
+            sedi 's|alias(kmpilotLibs\.plugins\.androidKotlinMultiplatformLibrary)|id("com.android.kotlin.multiplatform.library")|' "$f"
+        fi
         awk -v cs="$cs" -v ms="$ms" -v iosx64="$WANTS_IOS_X64" '
             BEGIN { injected = 0 }
             /^[[:space:]]*namespace[[:space:]]*=/ && injected == 0 {
@@ -1367,8 +1418,11 @@ adopt_vendor_core() {
     rm -f "$rlog"
     substep "identifiers → ${BOLD}${PKG_PREFIX}${RESET}, resources → ${BOLD}$(lower "$ROOT_NAME").core.*${RESET}"
 
+    if adopt_root_declares_agp; then AGP_ON_ROOT_CLASSPATH=yes; else AGP_ON_ROOT_CLASSPATH=no; fi
     adopt_rewrite_core_builds
     substep "build files made self-contained (compileSdk ${TGT_COMPILE_SDK:-default}, kmpilotLibs)"
+    [[ "$AGP_ON_ROOT_CLASSPATH" == "yes" ]] && \
+        substep "AGP comes from your root build file — core binds to it without a version"
 
     mkdir -p core
     local m

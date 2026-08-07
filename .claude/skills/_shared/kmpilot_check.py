@@ -834,6 +834,42 @@ def check_s1(feature, sources, ctx):
     return out
 
 
+def check_s6(feature, sources, ctx):
+    """S6 — the screen lives at `presentation/ui/*Screen.kt`.
+
+    Every path-gated rule in this file keys on that layout: R3 and R11a only look
+    `under(src, "presentation")`; R12, R13 and S1 only look `under(src, "ui")`. A
+    feature whose sources sit flat in the package root therefore has **none** of them
+    evaluated — they do not pass, they never run.
+
+    That is harmless for a feature KMPilot generated, which is born in the right shape.
+    It is not harmless for a **migrated** one. A project being migrated arrives flat, and
+    the migration's completion bar is "zero actionable findings": a feature could satisfy
+    R11b (add `presentation/*UiModel.kt`), R8 (add `di/`), R5 and I3, report **0**, and be
+    promoted to `managedFeatures` — while its screen still assigns `_uiState.value =`,
+    hardcodes every string, and keeps the `*UiState.kt` Rule 11 forbids. The migration
+    would sign off a feature it never migrated, in a file the user did not write.
+
+    So this is the rule that makes the other rules reachable. It fires only when the
+    module actually has a screen to place, and says where it goes.
+    """
+    return [
+        violation(
+            feature, "S6", "error", src.rel, 1,
+            f"`{src.path.name}` is not under `presentation/ui/` — move the feature into "
+            "the documented layout (`presentation/ui/`, `presentation/ui/components/`, "
+            "`data/`, `di/`). Until it is, R3, R12, R13 and S1 cannot be evaluated on it "
+            "at all, so a zero-findings result would not mean the feature conforms",
+        )
+        # Per screen, not "any screen is in the right place": a feature may own a
+        # secondary screen (the documented `kind: screen` case), and those live under
+        # `presentation/ui/` too. Checking only that *one* is placed correctly would let
+        # the second sit anywhere and take R3/R12/R13/S1 out of scope with it.
+        for src in sources
+        if src.path.name.endswith("Screen.kt") and src.path.parent.name != "ui"
+    ]
+
+
 def check_s2(feature, sources, ctx):
     """S2 — `components/` holds composables only."""
     return [
@@ -893,7 +929,40 @@ def check_integration(feature, sources, ctx) -> list[dict]:
         )
     else:
         block = re.search(r"modules\s*\((.*?)\)\s*\}", read(init_koin), re.DOTALL)
-        listed = block and re.search(rf"\b{re.escape(feature)}Module\b", block.group(1))
+        listed = bool(block) and bool(re.search(rf"\b{re.escape(feature)}Module\b", block.group(1)))
+        if block and not listed:
+            # One hop of indirection, because adopt's own Koin bootstrap needs it.
+            # When a project has no `startKoin`, `install.sh --adopt` writes one that
+            # reads `modules(kmpilotModules)`, with the list built in a *sibling* file:
+            #
+            #     val kmpilotModules: List<Module> = listOf(commonModule, dataModule, …)
+            #
+            # A feature added to that list is registered — the app starts, Koin resolves
+            # it — but a check that only reads the `modules(...)` call site sees nothing
+            # and reports it missing. Since it is a single-file textual match, no edit to
+            # the feature can ever clear it: the step cannot complete, `--force` follows,
+            # and promotion then refuses the forced sign-off. Exactly the unreachable-bar
+            # failure finding 1 already cost this phase once, on the scaffold adopt itself
+            # writes.
+            #
+            # One hop only, and only to a `val` defined in the app module: enough for the
+            # aggregation shape everyone actually writes, and short of pretending to
+            # resolve arbitrary Kotlin.
+            app_src = root / ctx["app_module"] / "src"
+            for name in re.findall(r"\b([A-Za-z_]\w*)\b", block.group(1)):
+                if name == f"{feature}Module":
+                    continue
+                for kt in app_src.rglob("*.kt"):
+                    body = read(kt)
+                    decl = re.search(
+                        rf"\bval\s+{re.escape(name)}\b[^=]*=(.*?)(?=\n\s*(?:val|fun|class|object)\b|\Z)",
+                        body, re.DOTALL,
+                    )
+                    if decl and re.search(rf"\b{re.escape(feature)}Module\b", decl.group(1)):
+                        listed = True
+                        break
+                if listed:
+                    break
         if not listed:
             out.append(
                 violation(
@@ -996,9 +1065,10 @@ FEATURE_CHECKS = [
     ("S2", check_s2),
     ("S4", check_s4),
     ("S5", check_s5),
+    ("S6", check_s6),
     ("I", check_integration),  # I1-I4
 ]
-# 15 feature-scoped checks + 4 integration points + 1 repo-scoped boundary check.
+# 16 feature-scoped checks + 4 integration points + 1 repo-scoped boundary check.
 CHECK_COUNT = (len(FEATURE_CHECKS) - 1) + 4 + 1
 
 SEVERITY_ORDER = {"error": 0, "warning": 1}

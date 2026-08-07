@@ -42,6 +42,137 @@ MATRIX = REPO / "scripts/migrate-matrix.sh"
 #   new    — the break
 #   guard  — ("matrix", variant) or ("test", script name under scripts/)
 MUTATIONS: list[dict] = [
+    # ── a step cannot be completed unopened (finding 22) ───────────────────
+    {
+        "id": "complete-without-checkpoint",
+        "why": "a step completes with no restore point and no before-counts, and the "
+               "report prints `? → 0` for the feature that needed the most work",
+        "file": "kmpilot_migrate.py",
+        "old": 'if not (plan.get("checkpoints") or {}).get(step["id"]) and not args.force:',
+        "new": "if False:",
+        "guard": ("test", "kmpilot_migrate_test.py"),
+    },
+    # ── I3 sees through one hop of indirection (finding 18) ────────────────
+    {
+        "id": "i3-call-site-only",
+        "why": "a feature registered through adopt's own `kmpilotModules` list reads as "
+               "unregistered, and no edit to the feature can ever clear it",
+        "file": "kmpilot_check.py",
+        "old": "        if block and not listed:",
+        "new": "        if False and not listed:",
+        "guard": ("test", "kmpilot_check_test.py"),
+    },
+    {
+        "id": "i3-indirection-unbounded",
+        "why": "any mention of the module name anywhere in the app module counts as "
+               "registration, so an unregistered feature passes I3",
+        "file": "kmpilot_check.py",
+        "old": '                    if decl and re.search(rf"\\b{re.escape(feature)}Module\\b", decl.group(1)):',
+        "new": '                    if re.search(rf"\\b{re.escape(feature)}Module\\b", body):',
+        "guard": ("test", "kmpilot_check_test.py"),
+    },
+    # ── S6: the rule that makes the other rules reachable (finding 17) ──────
+    {
+        "id": "s6-never-fires",
+        "why": "a migrated feature reaches zero findings with its screen still flat, so "
+               "R3/R12/R13/S1 never run and the migration signs off work it never did",
+        "file": "kmpilot_check.py",
+        "old": 'if src.path.name.endswith("Screen.kt") and src.path.parent.name != "ui"',
+        "new": 'if False and src.path.name.endswith("Screen.kt")',
+        "guard": ("test", "kmpilot_check_test.py"),
+    },
+    {
+        "id": "s6-fires-on-conforming",
+        "why": "a correctly laid-out feature is told to move its screen — every KMPilot "
+               "feature and every already-migrated repo would turn red",
+        "file": "kmpilot_check.py",
+        "old": 'if src.path.name.endswith("Screen.kt") and src.path.parent.name != "ui"',
+        "new": 'if src.path.name.endswith("Screen.kt")',
+        "guard": ("test", "kmpilot_check_test.py"),
+    },
+    # ── carve: features that are packages, not modules (step 9, finding 10) ─
+    {
+        "id": "carve-never-fires",
+        "why": "the app module is never searched for screen packages, so a monolith "
+               "inventories as zero features and plans a single report step",
+        "file": "kmpilot_discover.py",
+        "old": 'CARVE_HOST_KINDS = ("app", "app-android")',
+        "new": 'CARVE_HOST_KINDS = ()',
+        "guard": ("matrix", "carve-monolith"),
+    },
+    {
+        "id": "carve-host-unrestricted",
+        "why": "every module kind becomes a carve host, so :core:designsystem's own "
+               "XScreen carves the vendored design system apart",
+        "file": "kmpilot_discover.py",
+        "old": "    if module.kind not in CARVE_HOST_KINDS:\n        return []",
+        "new": "    if False:\n        return []",
+        "guard": ("matrix", "control-carve-core-designsystem"),
+    },
+    {
+        "id": "carve-counts-plain-composables",
+        "why": "any top-level @Composable counts as a screen root, so every app "
+               "module's own App() reads as a feature to carve out",
+        "file": "kmpilot_discover.py",
+        "old": "        and COMPOSABLE_SCREEN.match(decl[\"name\"])\n        and package_of(src)",
+        "new": "        and package_of(src)",
+        "guard": ("matrix", "control-carve-app-shell-only"),
+    },
+    {
+        "id": "carve-ignores-existing-home",
+        "why": "a stray screen in an existing feature's package carves a SECOND module "
+               "for it, giving one feature two rows and two migrate steps",
+        "file": "kmpilot_discover.py",
+        "old": "                if home:",
+        "new": "                if False:",
+        "guard": ("matrix", "carve-stray-screen"),
+    },
+    {
+        "id": "carve-ignores-collision",
+        "why": "carving onto an occupied feature/{name} is planned silently instead of "
+               "refused, merging two unrelated features into one directory",
+        "file": "kmpilot_discover.py",
+        "old": "                if collision:\n                    refusals.append(",
+        "new": "                if False:\n                    refusals.append(",
+        "guard": ("matrix", "carve-name-collision"),
+    },
+    {
+        "id": "carve-no-step",
+        "why": "discovery finds the in-module feature but the plan builds no carve step, "
+               "so the migrate step waits on a module nobody creates",
+        "file": "kmpilot_plan.py",
+        "old": 'if feature["location"] == "in-module" and feature["verdict"] not in (',
+        "new": 'if False and feature["location"] == "in-module" and feature["verdict"] not in (',
+        "guard": ("matrix", "carve-monolith"),
+    },
+    # ── build settings are module facts, not feature facts (finding 11) ────
+    {
+        "id": "jvm-target-feature-gated",
+        "why": "the JVM-target note only fires on features again, so a monolith hears "
+               "nothing about the inline failure its migration is about to cause",
+        "file": "kmpilot_discover.py",
+        "old": 'if module.kind in ("core-kmpilot", "other") or not module.sources:',
+        "new": 'if module.kind != "feature":',
+        "guard": ("matrix", "jvm-target-app-module"),
+    },
+    {
+        "id": "jvm-target-bar-from-any-module",
+        "why": "the bar is taken from the whole repo instead of :core:*, so the core "
+               "reports itself as below itself",
+        "file": "kmpilot_discover.py",
+        "old": 'if m.kind == "core-kmpilot" and m.jvm_target is not None',
+        "new": "if m.jvm_target is not None",
+        "guard": ("matrix", "control-jvm-target-core"),
+    },
+    {
+        "id": "android-resources-hits-application",
+        "why": "an AGP application module is told to add an androidResources block that "
+               "only the KMP androidLibrary DSL has",
+        "file": "kmpilot_discover.py",
+        "old": '                and "androidApplication" not in module.plugins \\\n',
+        "new": "",
+        "guard": ("matrix", "control-android-resources-application"),
+    },
     # ── I4: the nav host is usually a wrapper (step 9, finding 6) ──────────
     {
         "id": "i4-wrapper-blind",
@@ -198,7 +329,25 @@ def coverage() -> int:
 
 def run(only: str | None) -> int:
     backups = {name: (SRC / name).read_text() for name in {m["file"] for m in MUTATIONS}}
-    caught = survived = 0
+    caught = survived = invalid = 0
+    green_guards: dict[tuple[str, str], bool] = {}
+
+    def guard_is_green(guard: tuple[str, str]) -> bool:
+        """Is the guard passing on UNMUTATED code?
+
+        Without this the audit proves nothing about an already-failing guard: a red
+        guard stays red under mutation, `guard_caught` sees a non-zero exit, and the
+        mutation is reported `caught` on the strength of a failure that was there
+        before. Found the hard way while adding the carve controls — a control with a
+        typo'd assertion registered its mutation as caught on the first run.
+
+        Cached: several mutations share one guard and re-running the matrix per
+        mutation is the expensive part of this script.
+        """
+        if guard not in green_guards:
+            green_guards[guard] = not guard_caught(*guard)
+        return green_guards[guard]
+
     try:
         for mut in MUTATIONS:
             if only and only not in mut["id"]:
@@ -209,6 +358,12 @@ def run(only: str | None) -> int:
                 print(f"STALE    {mut['id']}  — anchor no longer in {mut['file']}; "
                       "the code moved and this mutation now proves nothing")
                 survived += 1
+                continue
+            if not guard_is_green(tuple(mut["guard"])):
+                print(f"INVALID  {mut['id']}  ({mut['guard'][1]})")
+                print("         the guard is ALREADY failing on unmutated code, so watching "
+                      "it fail again proves nothing. Fix the guard first.")
+                invalid += 1
                 continue
             path.write_text(original.replace(mut["old"], mut["new"], 1))
             regenerate()
@@ -227,8 +382,9 @@ def run(only: str | None) -> int:
             (SRC / name).write_text(text)
         regenerate()
 
-    print(f"\n{caught} caught · {survived} survived")
-    return 1 if survived else 0
+    tail = f" · {invalid} invalid" if invalid else ""
+    print(f"\n{caught} caught · {survived} survived{tail}")
+    return 1 if (survived or invalid) else 0
 
 
 def main() -> int:

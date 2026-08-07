@@ -18,7 +18,7 @@ Bring an **entire existing KMP project** under the pipeline: discover what is th
 |---|---|
 | **1. Discover** — inventory, dependency order, tier proposals, refusals | ✅ **shipped** |
 | **2. Plan** — the written, confirmed migration plan + on-disk resume ledger | ✅ **shipped** |
-| **3. Clean** — checkpoint branch, rewrite one step at a time to zero checker findings, restore-and-refuse | ✅ **shipped** |
+| **3. Clean** — checkpoint branch, rewrite one step at a time to zero checker findings, restore-and-refuse. Creates the feature modules a monolith never had (`carve`) | ✅ **shipped** |
 | **4. Integrate** — `MIGRATION-REPORT.md`, specs, `managedFeatures` promotion | ✅ **shipped** |
 
 **Phases 1 and 2 write no source file at all** — discovery writes nothing, the plan writes exactly one file. Source is only ever touched in phase 3, only from a **confirmed** plan, and only behind a checkpoint branch with a per-step commit. Phase 4 writes no source either: one report and one manifest field.
@@ -135,6 +135,8 @@ python3 .claude/skills/_shared/kmpilot_migrate.py --root {repo} complete {step}
 Feature source is protected by the `protect-feature-files.sh` hook, so before editing anything under `feature/` run `touch /tmp/.claude-kmpilot-skill-active`, and `rm -f /tmp/.claude-kmpilot-skill-active` when the run ends or exits early.
 
 **One step at a time, in the order `next` gives.** Never batch steps, never pick one by eye, and never let this become a single sweeping pass over the repo — that is the failure every earlier phase was built to prevent. When a pass hits a blocker, `refuse {step} --reason "…"`: it restores the subject to its checkpoint and records the refusal in one action. A refusal is a pass; move to the next step.
+
+A **`carve`** step is the one that creates a module rather than rewriting one — a feature that is still a package inside the app module. Route it to `integrator` and write `detail.buildFileSpec` exactly as given; it carries the JVM level, `androidResources` and serialization-plugin settings that three separate runtime crashes were traced to, none of which a build catches.
 
 Full loop, the cluster→agent map and the resume rules: @phases/phase-3-clean.md
 

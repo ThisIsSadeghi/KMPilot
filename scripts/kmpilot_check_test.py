@@ -56,16 +56,39 @@ dependencies {
     implementation(project(":feature:clean"))
 }
 """)
+        # `cleanModule` is registered through an aggregating `val` in a SIBLING file,
+        # not named at the `modules(...)` call site. That is the shape
+        # `install.sh --adopt` writes when a project has no `startKoin` of its own
+        # (`modules(kmpilotModules)` + a `kmpilotModules` list next door), and I3 used to
+        # read only the call site — so a feature registered exactly as adopt's own
+        # scaffold prescribes was reported missing, with no edit to the feature able to
+        # clear it. `clean` passing I3 here is what proves the indirection hop works;
+        # `probe` still failing it is what proves the hop is not over-broad.
+        # The import of `probeModule` is deliberate and is a trap: `probe` is imported
+        # but never added to any list, which is what a half-finished registration looks
+        # like. I3 must still report it missing. Without this line the "follow one hop"
+        # relaxation could be widened to "the name appears anywhere in the app module"
+        # and nothing would notice.
         self.w(f"composeApp/src/commonMain/kotlin/{PKG}/app/initKoin.kt", f"""
 package {PKG}.app
+
+import {PKG}.probe.di.probeModule
 
 fun initKoin() =
     startKoin {{
         modules(
             appModule,
-            cleanModule,
+            featureModules,
         )
     }}
+""")
+        self.w(f"composeApp/src/commonMain/kotlin/{PKG}/app/FeatureModules.kt", f"""
+package {PKG}.app
+
+val featureModules: List<Module> =
+    listOf(
+        cleanModule,
+    )
 """)
         self.w(f"composeApp/src/commonMain/kotlin/{PKG}/app/BaseAppNavHost.kt", f"""
 package {PKG}.app
@@ -249,6 +272,18 @@ private val isMax: Boolean
     # ── the probe feature: one violation per check ──────────────────────────
     def _probe_feature(self) -> None:
         self.w("feature/probe/build.gradle.kts", "// probe feature\n")
+        # S6 — a screen sitting flat in the package root instead of presentation/ui/.
+        # This is the shape a migrated feature arrives in, and it is why S6 exists:
+        # R3, R12, R13 and S1 are all path-gated on presentation/ui, so without this
+        # rule a feature in this layout reports zero findings because those checks
+        # never ran — and a migration would sign off work it never did.
+        self.w(f"feature/probe/src/commonMain/kotlin/{PKG}/probe/StrayScreen.kt", f"""
+package {PKG}.probe
+
+@Composable
+fun StrayScreen() {{
+}}
+""")
         # R3
         self.w(f"feature/probe/src/commonMain/kotlin/{PKG}/probe/presentation/ProbeViewModel.kt", f"""
 package {PKG}.probe.presentation
@@ -371,6 +406,7 @@ EXPECTED = {
     "S2": ("ProbeFormatters.kt", "warning"),
     "S3": ("XButton.kt", "error"),
     "S4": ("ProbeScreen.kt", "warning"),
+    "S6": ("StrayScreen.kt", "error"),
     "I1": ("settings.gradle.kts", "error"),
     "I2": ("composeApp/build.gradle.kts", "error"),
     "I3": ("initKoin.kt", "error"),

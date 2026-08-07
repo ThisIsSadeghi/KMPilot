@@ -41,6 +41,7 @@ Every unit of work is one step with a stable id (`hoist-core-network`, `migrate-
 | `hoist` | a shared module → `:core:common` / `:core:data` / `:core:designsystem` |
 | `extract` | shared code living **inside** a feature → the same tiers; this is what removes a cross-feature edge |
 | `relocate` | a feature outside `feature/` → `feature/{name}/`, so the checker can grade it at all |
+| `carve` | a feature that is a **package inside another module** → a new `feature/{name}/` module. `relocate`'s sibling: same goal, but the module has to be created rather than moved |
 | `migrate` | rewrite one feature to zero checker findings, then promote it to `managedFeatures` |
 | `report` | `MIGRATION-REPORT.md`, a spec per migrated feature, the closing step |
 
@@ -55,7 +56,9 @@ Every unit of work is one step with a stable id (`hoist-core-network`, `migrate-
 
 ## Order
 
-A step never precedes the code it consumes: hoists and extracts before the features that use them, `relocate` before that feature's `migrate`, `report` last. Within that constraint the order is discovery's own topological module order.
+A step never precedes the code it consumes: hoists and extracts before the features that use them, `relocate` / `carve` before that feature's `migrate`, `report` last. Within that constraint the order is discovery's own topological module order.
+
+A `carve` additionally waits on the `extract` for its owner module, when there is one. The shared code leaves the app module **before** the feature does — carving first would move a package whose imports are about to be rewritten under it.
 
 A `migrate` step **never depends on another `migrate` step.** Features do not depend on features; the cross-feature edge is exactly what the `extract` step removes. Hanging one feature's rewrite on another's would make a single refused feature block every feature that happens to import it today — a wrong refusal, which is the failure that costs a user's trust.
 
@@ -75,7 +78,7 @@ Each `migrate` step carries **rewrite passes** — the checker's own findings, c
 
 Every finding lands in exactly one pass, with its `file:line`. A **refused** step carries **no** passes at all: a refusal is a pass, not a smaller job, and a work list on a refused feature reads as something somebody is expected to work through.
 
-A feature still outside `feature/` has **no** findings yet — the checker only grades `feature/*`. Its `migrate` step says so (`gradable: false`); the work list appears once the `relocate` step has run and the feature is re-graded.
+A feature still outside `feature/` has **no** findings yet — the checker only grades `feature/*`. Its `migrate` step says so (`gradable: false`); the work list appears once the `relocate` (or `carve`) step has run and the feature is re-graded.
 
 ## Confirmation, and how it lapses
 
