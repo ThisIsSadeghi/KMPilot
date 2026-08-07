@@ -791,6 +791,11 @@ def build_plan(root: Path, report: dict, previous: dict | None) -> dict:
         # regeneration would strand a half-open step with no way back.
         "migration": previous.get("migration"),
         "checkpoints": dict(previous.get("checkpoints") or {}),
+        # Also written by kmpilot_migrate.py: the findings a relocated feature had the
+        # moment its step was opened. Re-deriving them is impossible after the rewrite
+        # — the whole point is that they no longer exist — so a regeneration that
+        # dropped them would leave the report with nothing to print as "before".
+        "regrades": dict(previous.get("regrades") or {}),
         "steps": steps,
         # Discovery's refusals plus the ones a rewrite pass hit, in one list, because
         # MIGRATION-REPORT.md has to name every refusal regardless of when it was found.

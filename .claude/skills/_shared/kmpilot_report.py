@@ -169,6 +169,7 @@ def assess(root: Path, plan: dict) -> dict:
     present = []
     features: list[dict] = []
 
+    regrades = plan.get("regrades") or {}
     for step in plan["steps"]:
         if step["kind"] != "migrate":
             continue
@@ -177,6 +178,14 @@ def assess(root: Path, plan: dict) -> dict:
         under_featuredir = rel is not None and rel.parts[:1] == ("feature",)
         if under_featuredir:
             present.append(name)
+        # A feature discovered outside feature/ was ungradable when the plan was built,
+        # so its plan-time counts are empty by construction. `kmpilot_migrate.py` grades
+        # it when the step is opened — after the relocate, before the rewrite — and that
+        # is the only "before" that ever existed for it. Without this the features that
+        # needed the most work are exactly the ones the report prints as `? → 0`.
+        source = step["detail"]
+        if not source.get("gradable", True) and step["id"] in regrades:
+            source = regrades[step["id"]]
         features.append(
             {
                 "name": name,
@@ -186,9 +195,11 @@ def assess(root: Path, plan: dict) -> dict:
                 "statusReason": step.get("statusReason", ""),
                 "dir": rel.as_posix() if rel else None,
                 "gradable": under_featuredir,
-                "before": dict(step["detail"].get("findings") or {}),
-                "beforeTotal": step["detail"].get("findingCount", 0),
-                "beforeKnown": bool(step["detail"].get("gradable", True)),
+                "before": dict(source.get("findings") or {}),
+                "beforeTotal": source.get("findingCount", 0),
+                "beforeKnown": bool(
+                    step["detail"].get("gradable", True) or step["id"] in regrades
+                ),
                 "tests": test_source_sets(root, rel),
                 "hasSpec": has_spec(root, name),
                 "wasManaged": managed is not None and name in managed,
@@ -268,10 +279,31 @@ def rule_table(features: list[dict]) -> list[tuple[str, int, int]]:
     return [(rule, before.get(rule, 0), after.get(rule, 0)) for rule in sorted(before | after)]
 
 
+def step_counts(plan: dict) -> dict:
+    """Step statuses as they stand *given this report exists*.
+
+    `finish` is promote → **write** → verify → complete — that order is deliberate,
+    because `verify report` asks whether the file is on disk and cannot pass before it
+    is written. So the report is always rendered while its own step is still open, and
+    a summary row copied from the ledger verbatim says "1 outstanding" on a run that
+    finished completely, contradicting `status` in the same breath. The order is right;
+    the count was wrong, so it is fixed in the writer.
+
+    Only the `report` step, and only out of an unfinished status: a report step that was
+    refused or skipped is a real outcome and stays visible.
+    """
+    counts = dict(plan.get("summary") or {})
+    step = next((s for s in plan["steps"] if s["kind"] == "report"), None)
+    if step and step["status"] in ("pending", "in-progress"):
+        counts[step["status"]] = max(0, counts.get(step["status"], 0) - 1)
+        counts["done"] = counts.get("done", 0) + 1
+    return counts
+
+
 def render(plan: dict, state: dict, promoted: list[str]) -> str:
     p = plan["project"]
     migration = plan.get("migration") or {}
-    s = plan["summary"]
+    s = step_counts(plan)
     out: list[str] = []
     w = out.append
 

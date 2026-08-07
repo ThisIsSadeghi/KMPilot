@@ -54,6 +54,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -182,6 +183,43 @@ def set_progress(plan: dict, step_id: str, status: str, note: str = "") -> None:
         step["statusSource"] = "ledger"
         if note:
             step["statusReason"] = note
+
+
+def capture_regrade(root: Path, plan: dict, step: dict) -> dict | None:
+    """Record what the checker finds the moment a previously ungradable step is opened.
+
+    The checker only grades `feature/*`, so a feature discovered at the repo root has
+    **no** findings at plan time — the plan says so in its `gradableNote`. By the time
+    its `migrate` step is opened the `relocate` it depends on has landed, the module is
+    under `feature/`, and the tree is at the checkpoint: post-move, pre-rewrite. That is
+    exactly the "before" the report wants, and it was being thrown away — so the two
+    features that needed the most work were the two printed as `? → 0` under "no rule
+    findings were recorded".
+
+    Only for steps the plan could not grade. A gradable step already carries real
+    plan-time counts, and overwriting them here would silently redefine "before" as
+    *after the hoists and extracts*, which is not what the user confirmed.
+
+    Actionable-only, matching `verify_step`'s bar and the report's `afterTotal`: a
+    "before" counted on a wider bar than the "after" makes every row of the rule table
+    read as progress that did not happen.
+    """
+    if step["kind"] != "migrate" or step["detail"].get("gradable", True):
+        return None
+    feature = step["detail"]["feature"]
+    if not (root / "feature" / feature).is_dir():
+        return None
+    violations, _ = check.run(root, [feature])
+    rows = [v for v in violations if v.get("feature") == feature]
+    work = check.actionable(rows)
+    entry = {
+        "findingCount": len(work),
+        "findings": dict(Counter(v["rule"] for v in work)),
+        "passes": plan_mod.passes_for(rows),
+        "at": now(),
+    }
+    plan.setdefault("regrades", {})[step["id"]] = entry
+    return entry
 
 
 # ─── verification ────────────────────────────────────────────────────────────
@@ -399,9 +437,16 @@ def cmd_checkpoint(root: Path, plan: dict, step: dict, args, color: Palette) -> 
     ref = commit_all(root, f"checkpoint before {step['id']}") or head_ref(root)
     plan.setdefault("checkpoints", {})[step["id"]] = {"ref": ref, "at": now()}
     set_progress(plan, step["id"], "in-progress")
+    regrade = capture_regrade(root, plan, step)
     refresh(plan)
     save(root, plan)
     print(f"{color.bold}{step['id']}{color.off} open — checkpoint {ref[:9]}")
+    if regrade is not None:
+        print(f"  {color.warning}re-graded now that it sits under feature/: "
+              f"{regrade['findingCount']} actionable finding(s){color.off}")
+        for rewrite in regrade["passes"]:
+            print(f"  pass {rewrite['cluster']:<14} agent={rewrite['agent'] or 'unrouted':<11} "
+                  f"{','.join(rewrite['rules'])} ×{rewrite['findingCount']}")
     print(f"  restore it with: kmpilot_migrate.py restore {step['id']}")
     return 0
 

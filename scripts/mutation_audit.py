@@ -110,6 +110,57 @@ MUTATIONS: list[dict] = [
         "new": '    would = state["toPromote"]',
         "guard": ("test", "kmpilot_report_test.py"),
     },
+
+    # ── a relocated feature's "before" (step 9, open item 2) ───────────────
+    {
+        "id": "regrade-never-captured",
+        "why": "the only 'before' a relocated feature ever has is thrown away, so the "
+               "features that needed the most work report as `? → 0`",
+        "file": "kmpilot_migrate.py",
+        "old": '    if step["kind"] != "migrate" or step["detail"].get("gradable", True):\n'
+               "        return None",
+        "new": "    if True:\n        return None",
+        "guard": ("test", "kmpilot_report_test.py"),
+    },
+    {
+        "id": "regrade-overwrites-gradable",
+        "why": "a step the plan already graded is re-graded on open, silently redefining "
+               "'before' as 'after the hoists and extracts'",
+        "file": "kmpilot_migrate.py",
+        "old": '    if step["kind"] != "migrate" or step["detail"].get("gradable", True):\n'
+               "        return None",
+        "new": '    if step["kind"] != "migrate":\n        return None',
+        "guard": ("test", "kmpilot_report_test.py"),
+    },
+    {
+        "id": "regrade-lost-on-regen",
+        "why": "a regeneration drops the capture, and it cannot be re-derived — the "
+               "rewrite has already removed the findings it records",
+        "file": "kmpilot_plan.py",
+        "old": '        "regrades": dict(previous.get("regrades") or {}),',
+        "new": '        "regrades": {},',
+        "guard": ("test", "kmpilot_report_test.py"),
+    },
+    {
+        "id": "regrade-ignored-by-report",
+        "why": "the capture is written but the report keeps reading the empty plan-time "
+               "counts, so the fix exists and changes nothing a reader sees",
+        "file": "kmpilot_report.py",
+        "old": '        if not source.get("gradable", True) and step["id"] in regrades:',
+        "new": "        if False:",
+        "guard": ("test", "kmpilot_report_test.py"),
+    },
+
+    # ── the report must not count its own step outstanding (open item 5) ───
+    {
+        "id": "report-counts-own-step",
+        "why": "a run that finished completely reports outstanding work, contradicting "
+               "`status` in the same artifact",
+        "file": "kmpilot_report.py",
+        "old": "    s = step_counts(plan)",
+        "new": '    s = plan["summary"]',
+        "guard": ("test", "kmpilot_report_test.py"),
+    },
 ]
 
 

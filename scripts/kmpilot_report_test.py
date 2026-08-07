@@ -28,6 +28,7 @@ Exits 0 on success. Runs in ~10s, no network, no Gradle. Needs `git`.
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -131,6 +132,36 @@ fun @CAP@Screen() {
     Text(text = "Hardcoded label")
 }
 """.replace("@NAME@", name).replace("@CAP@", name.capitalize()))
+        # A feature the checker CANNOT grade at plan time, because it sits outside
+        # `feature/`. Its plan-time work list is empty by construction, so the report
+        # printed `? → 0` and "no rule findings were recorded" for precisely the
+        # features that needed the most work. The only "before" it ever has is the
+        # re-grade taken when its step is opened, after the relocate and before the
+        # rewrite — which is why this shape has to be in the fixture to test at all.
+        fixture.w("settings.gradle.kts",
+                  (root / "settings.gradle.kts").read_text() + '\ninclude(":stray")\n')
+        # No shared-code dependency, deliberately: its `migrate` step must hang on its
+        # own `relocate` and nothing else, or the run cannot open it and the re-grade
+        # this covers never happens.
+        fixture.w("stray/build.gradle.kts", """
+kotlin {
+    androidTarget()
+    iosArm64()
+    jvm("desktop")
+}
+""")
+        fixture.kt("stray", "stray", "StrayScreen.kt", """
+package @PKG@.stray
+
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun StrayScreen() {
+    Text(text = "Hardcoded label")
+}
+""")
+
         # A test source set that outlives the rewrite and still references the types it
         # replaced. Migration does not touch tests, so naming it is the whole mitigation.
         plain_test = root / "feature/plain/src/commonTest/kotlin/PlainScreenTest.kt"
@@ -181,8 +212,24 @@ fun @CAP@Screen() {
         )
         # Force completions the checker never passed. This is the whole point of the
         # phase: `done` is a claim, and promotion is where the claim is checked.
+        # Their shared-code dependency has to be settled before their steps will open —
+        # the order is enforced, not suggested. Skipping it here is what lets the
+        # checkpoints below actually run; without it they failed silently and `--force`
+        # completed steps that had never been opened.
+        plan_cli(root, "--mark", "hoist-core-model=skipped")
         for name in ("plain", "bare"):
-            mig(root, "checkpoint", f"migrate-{name}")
+            opened_gradable = mig(root, "checkpoint", f"migrate-{name}")
+            f.want(
+                opened_gradable.returncode == 0,
+                f"migrate-{name} must actually open: {opened_gradable.stderr[:200]}",
+            )
+            # The negative control for the re-grade: this feature was gradable when the
+            # plan was built, so re-grading it here would silently redefine "before" as
+            # "after the hoists and extracts" — not what the user confirmed.
+            f.want(
+                f"migrate-{name}" not in (ledger(root).get("regrades") or {}),
+                f"a step the plan already graded must NOT be re-graded when opened",
+            )
             forced = mig(root, "complete", f"migrate-{name}", "--force")
             f.want(
                 forced.returncode == 0,
@@ -193,6 +240,42 @@ fun @CAP@Screen() {
                 f"the forced step must read done: migrate-{name} is "
                 f"{step_status(root, f'migrate-{name}')}",
             )
+
+        # ── the ungradable feature: relocate it, then open it ───────────────
+        # The relocate is what makes the checker able to see it at all. Doing it for
+        # real (rather than marking it done) is the point: the re-grade is taken from
+        # the tree, so a fake relocate would prove nothing about the counts.
+        stray_step = {s["id"]: s for s in ledger(root)["steps"]}["migrate-stray"]
+        f.want(
+            not stray_step["detail"]["gradable"]
+            and not stray_step["detail"].get("passes"),
+            "fixture drift: `stray` must be a feature the plan could NOT grade, with an "
+            "empty work list — otherwise the bug this covers cannot occur",
+        )
+        mig(root, "checkpoint", "relocate-stray")
+        (root / "feature").mkdir(exist_ok=True)
+        git(root, "mv", "stray", "feature/stray")
+        settings_now = root / "settings.gradle.kts"
+        settings_now.write_text(
+            settings_now.read_text().replace('include(":stray")', 'include(":feature:stray")')
+        )
+        relocated = mig(root, "complete", "relocate-stray")
+        f.want(
+            relocated.returncode == 0,
+            f"the relocate must complete: {relocated.stdout[-300:]}{relocated.stderr[:300]}",
+        )
+        opened_stray = mig(root, "checkpoint", "migrate-stray")
+        f.want(
+            opened_stray.returncode == 0,
+            f"opening the relocated feature failed: {opened_stray.stderr[:300]}",
+        )
+        stray_regrade = (ledger(root).get("regrades") or {}).get("migrate-stray")
+        f.want(
+            stray_regrade is not None and stray_regrade["findingCount"] > 0,
+            "opening a step the plan could not grade must capture the findings it has now — "
+            f"that is the only 'before' this feature ever has. got {stray_regrade}",
+        )
+        mig(root, "complete", "migrate-stray", "--force")
 
         # A `done` step that nobody worked on is `managedFeatures` or a feature that
         # already conformed. Reporting it as migrated claims credit for code this run
@@ -339,6 +422,32 @@ fun @CAP@Screen() {
             "a migrated feature with no test source set at all must be named — it carries "
             "the most behavioural risk in the run",
         )
+        # ── the relocated feature's "before" survives into the report ───────
+        # Without the capture this row reads `? → 0` and the rule table below it says
+        # "No rule findings were recorded for any feature in this migration" — for the
+        # feature that needed the most work in the whole run.
+        stray_row = next(
+            (ln for ln in body.splitlines() if ln.startswith("| `stray`")), ""
+        )
+        f.want(
+            bool(re.search(r"\|\s*[1-9]\d*\s*→", stray_row)),
+            f"a relocated feature's findings-before must be a real number, not `?`: {stray_row!r}",
+        )
+        rules = body.split("## What changed, per rule", 1)[-1].split("##", 1)[0]
+        f.want(
+            "No rule findings were recorded" not in rules,
+            f"…and the rule table must not claim the run changed nothing: {rules[:300]}",
+        )
+        # `(stray_regrade or {})` on purpose: an earlier failure must not abort the suite
+        # here and hide every failure collected before it — a trap this phase has already
+        # been caught by once.
+        captured_rules = sorted((stray_regrade or {}).get("findings") or {})
+        f.want(
+            bool(captured_rules) and any(rule in rules for rule in captured_rules),
+            f"the captured rules must reach the rule table: {captured_rules} "
+            f"not in {rules[:300]}",
+        )
+
         # Regenerated, not appended to: a report that accretes stale sections reads as
         # current and is worse than none.
         rep(root, "write")
@@ -366,6 +475,33 @@ fun @CAP@Screen() {
         forced_finish = rep(root, "finish", "--force")
         f.want(forced_finish.returncode == 0, f"--force must close it: {forced_finish.stderr[:300]}")
         f.want(step_status(root, "report") == "done", "the report step must end up done")
+
+        # `finish` is promote → write → verify → complete, because `verify report` needs
+        # the file to exist before it can pass. So the report is always rendered while
+        # its own step is still open, and a summary copied from the ledger verbatim
+        # reports the run that just closed as still carrying outstanding work.
+        #
+        # Asserted on THIS close, not a later one: by the second `finish` the step is
+        # already done, the adjustment is a no-op, and the same assertion passes with
+        # the fix deleted. The check is agreement with `status` rather than a fixed
+        # total — this fixture has real outstanding work of its own, and a hard-coded
+        # number would pass with the count off by one in the other direction.
+        steps_row = next(
+            (ln for ln in (root / "MIGRATION-REPORT.md").read_text().splitlines()
+             if ln.startswith("| Plan steps |")),
+            "",
+        )
+        summary = ledger(root)["summary"]
+        f.want(
+            f"| {summary['done']} done " in steps_row,
+            f"the report must count its own step among the done ones — writing it is how "
+            f"that step is done: {steps_row!r} vs ledger done={summary['done']}",
+        )
+        f.want(
+            f"{summary['pending'] + summary['in-progress']} outstanding" in steps_row,
+            f"…and must not report as outstanding a run `status` calls closed: {steps_row!r} "
+            f"vs ledger pending={summary['pending']} in-progress={summary['in-progress']}",
+        )
         f.want(
             "force" in {s["id"]: s for s in ledger(root)["steps"]}["report"].get(
                 "statusReason", ""
@@ -390,7 +526,22 @@ fun @CAP@Screen() {
 
         # ── a clean feature promotes, and the step then verifies ────────────
         # Undo the forced claims so the run can reach a genuinely verifiable close.
-        plan_cli(root, "--mark", "migrate-plain=skipped", "--mark", "migrate-bare=skipped")
+        plan_cli(root, "--mark", "migrate-plain=skipped", "--mark", "migrate-bare=skipped",
+                 "--mark", "migrate-stray=skipped")
+        # That regeneration is the first since the relocate actually moved `stray`, so
+        # discovery no longer proposes a `relocate` step and the step list changed —
+        # which lapses the confirmation by design. Progress survives it; only the
+        # approval does not, so re-approving is what an operator does here.
+        f.want(
+            ledger(root)["planStatus"] == "draft",
+            "a step list that changed under a confirmed plan must lapse its confirmation",
+        )
+        f.want(
+            "migrate-stray" in (ledger(root).get("regrades") or {}),
+            "the captured re-grade must survive regeneration — it cannot be re-derived "
+            "once the rewrite has removed the findings it records",
+        )
+        plan_cli(root, "--confirm")
         rerun = rep(root, "finish", "--force")
         f.want(rerun.returncode == 0, f"a re-run must be safe: {rerun.stderr[:300]}")
         ok = mig(root, "verify", "report")
@@ -399,6 +550,10 @@ fun @CAP@Screen() {
             f"with nothing left claiming a migration it did not do, the closing step must "
             f"verify: {ok.stdout[:300]}",
         )
+        # `finish` is promote → write → verify → complete, because `verify report` needs
+        # the file to exist first. So the report is always rendered while its own step is
+        # still open, and a summary copied from the ledger verbatim reports the run that
+        # just closed completely as carrying outstanding work.
         # Nothing was migrated in that state, and "every migrated feature has tests" is
         # true of zero features. A vacuous all-clear in the one artifact a reviewer
         # reads is the same failure as an unverified tick that reads as verified.

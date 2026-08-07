@@ -21,7 +21,7 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ---
 
-## ▶ Resume here (2026-08-06) — cold-start contract
+## ▶ Resume here (2026-08-07) — cold-start contract
 
 Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way:
 two repos migrated end to end, nine findings, all fixed**. This block is written to be the only
@@ -31,12 +31,17 @@ thing a fresh session has to read to keep going. Start it with exactly:
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight (2026-08-06).** Everything is committed and every tree is clean.
-> Confirm with `git status --short` (empty) and `git log --oneline -4` — the tip is the commit
-> that recorded this block, sitting on `14fa79e` *"Prove the guards can fail"* and `8537389`
-> *"Catch the migration bugs that only a launch would find"*. If anything sits above them, work
-> has happened since; trust the repo over this block and update it. **Nothing has been pushed and
-> no PR is open.**
+> **Nothing is in flight (2026-08-07).** Everything is committed and every tree is clean.
+> Confirm with `git status --short` (empty) and `git log --oneline -4` — the tip is *"Make the
+> migration report tell the truth about its own run"*, sitting on `d6b7ce6` *"Specify the test-bed
+> projects step 9 still needs"* and `ea481d4` *"Record the second migration and name the untested
+> surface"*. If anything sits above them, work has happened since; trust the repo over this block
+> and update it. **Nothing has been pushed and no PR is open.**
+>
+> **The full baseline was green on 2026-08-07** — all four self-tests, `migrate-matrix.sh`
+> **66 passed · 0 failed**, `kmpilot_check --all` 0 errors 0 warnings, `gen-surfaces.py --check`
+> clean, and `mutation_audit.py` **12 caught · 0 survived** (was 7). Re-run §2 before changing
+> anything anyway; a failure there is the finding, and it outranks step 9.
 >
 > **Two repos are migrated.**
 >
@@ -86,12 +91,23 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > the projects exist and the user says so.** If none exists yet, there is nothing to run at step 9
 > — say that plainly rather than manufacturing a test bed.
 >
-> **Three things are recorded but NOT fixed** (see the end of the findings 5–9 section): the
-> report counting its own step as outstanding; a relocated feature's before-counts being lost so
-> the report says "no rule findings were recorded" for the features that needed the most work;
-> and **61 of the 66 matrix variants never having been proven able to fail** —
-> `python3 scripts/mutation_audit.py --coverage` prints that list, and it is the largest
-> untested surface in the phase.
+> **The hand-built test beds did not exist yet on 2026-08-07** — `~/KMPProjects/kmpilot-testbeds/`
+> was absent, so the real-repo half of step 9 had nothing to run and was not started. Check again
+> before assuming; the user builds them in separate sessions.
+>
+> **The `bookshelf` run left three things recorded but not fixed. Two are now fixed** (2026-08-07,
+> see *Landed 2026-08-07 — the two report bugs*): the report counting its own step as outstanding,
+> and a relocated feature's before-counts being lost so the report said *"no rule findings were
+> recorded"* for the features that needed the most work.
+>
+> **The third remains, and it is the largest untested surface in the phase:** **61 of the 66 matrix
+> variants have never been proven able to fail** — `python3 scripts/mutation_audit.py --coverage`
+> prints the list. **Deferred on purpose, 2026-08-07.** Test-bed runs will change code and a
+> mutation anchors to exact source text, so grinding now buys guards that go stale before the PR;
+> and a finding from an unrun repo shape outranks re-verifying an old guard. **Sequencing decided:
+> test beds first, then grind the ~24 `control-*` negative controls before the PR** — a wrong
+> refusal is the failure this phase says costs a user's trust, and a control that cannot fail is
+> exactly how one ships unnoticed. The remaining ~37 are the lowest-value tail.
 
 ### 1. Where the work lives
 
@@ -104,7 +120,11 @@ project migration"* (steps 5–7), `9169323` *"Add the integrate phase to projec
 settings that break a migrated feature"*, `577484b` *"Record the first real migration and reset the
 resume block"* (findings 1–4, from `bookshelf-featuredir`), then `8537389` *"Catch the migration
 bugs that only a launch would find"* and `14fa79e` *"Prove the guards can fail"* (findings 5–9,
-from `bookshelf`), plus one commit for this block. Do not commit or push unless the user says so.
+from `bookshelf`), plus one commit for this block and `d6b7ce6` *"Specify the test-bed projects
+step 9 still needs"*. **Uncommitted on 2026-08-07:** the two report-bug fixes described under
+*Landed 2026-08-07* (`kmpilot_migrate.py`, `kmpilot_plan.py`, `kmpilot_report.py` in
+`pipeline/src`, the regenerated `.claude/`, `kmpilot_report_test.py`, `kmpilot_migrate_test.py`,
+`mutation_audit.py`, and this file). Do not commit or push unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -739,15 +759,11 @@ and 7. `kmpilot_check.py` is **20 checks**; KMPilot's own six features stay 0 er
 
 **Still open after this run** (none blocks; recorded rather than fixed):
 
-1. **Open item 5 confirmed, not fixed.** `MIGRATION-REPORT.md` printed *"8 done · … · 1
-   outstanding"* on a run that finished completely, while `status` said *9 done*. The writer counts
-   its own step as outstanding because the report is written before `verify report` runs.
-2. **A relocated feature's before-counts are lost.** The plan's work lists are empty for a
-   root-level feature — the checker only grades `feature/*`, so it is ungradable until its
-   `relocate` step lands (the `gradableNote` says exactly this). The report therefore prints
-   `? → 0` for those features and *"No rule findings were recorded for any feature in this
-   migration"* — precisely for the two features that needed the most work. The counts exist; they
-   are produced by the re-grade right after the relocate and are simply never captured.
+1. ✅ **Fixed 2026-08-07.** `MIGRATION-REPORT.md` printed *"8 done · … · 1 outstanding"* on a run
+   that finished completely, while `status` said *9 done*. See *Landed 2026-08-07* above.
+2. ✅ **Fixed 2026-08-07.** A relocated feature's before-counts were lost, so the report printed
+   `? → 0` and *"No rule findings were recorded"* for the features that needed the most work. See
+   *Landed 2026-08-07* above.
 
 3. **61 of the 66 matrix variants have never been proven able to fail.** Finding 9 is the
    reason this is written down as work rather than left as a green checkmark: a control that
@@ -757,6 +773,58 @@ and 7. `kmpilot_check.py` is **20 checks**; KMPilot's own six features stay 0 er
 
 **Convergence:** not close. Two repos, nine findings. `bookshelf` is the first repo whose *shape*
 was new (root-level features), and it produced five.
+
+### Landed 2026-08-07 — the two report bugs from the `bookshelf` run
+
+Both were recorded rather than fixed when that run closed, and neither needs a repo to reproduce.
+They are the same bug in different clothes: **the report describing a run it was part of, using
+numbers taken from before its own effect.**
+
+**Open item 5 — the report counted its own step as outstanding.** `finish` is promote → **write**
+→ verify → complete, because `verify report` asks whether the file is on disk and cannot pass
+before it is written. So `MIGRATION-REPORT.md` is always rendered while the `report` step is still
+`pending`, and a summary row copied from `plan["summary"]` verbatim printed *"1 outstanding"* on a
+run that finished completely — contradicting `status` in the same artifact. The **order is right**;
+the count was wrong, so `step_counts()` fixes it in the writer, and only for the `report` step and
+only out of `pending`/`in-progress`: a report step that was refused or skipped is a real outcome
+and stays visible.
+
+**Open item 2 — a relocated feature's before-counts were lost.** The checker only grades
+`feature/*`, so a feature discovered at the repo root has **no** findings at plan time; the plan
+already said so in its `gradableNote`. Those counts were never captured afterwards, so the report
+printed `? → 0` and *"No rule findings were recorded for any feature in this migration"* —
+precisely for the two features that needed the most work.
+
+Fixed where the number actually exists: `kmpilot_migrate.py checkpoint` now calls
+`capture_regrade()` when a step the plan **could not** grade is opened. At that instant the
+`relocate` it depends on has landed (the order is enforced, not suggested), the module is under
+`feature/`, and the tree is at the checkpoint — post-move, pre-rewrite. That is the only "before"
+the feature ever has.
+
+| Call | Why |
+|---|---|
+| **only for steps the plan could not grade** | a gradable step already carries real plan-time counts; re-grading it on open would silently redefine "before" as *after the hoists and extracts*, which is not what the user confirmed |
+| **actionable-only**, matching `verify_step` and `afterTotal` | a "before" counted on a wider bar than the "after" makes every row of the rule table read as progress that did not happen (finding 1's rule, applied again) |
+| **carried across regeneration** beside `checkpoints` | it cannot be re-derived — the rewrite has by then removed the findings it records — so a regeneration that dropped it would leave the report with nothing to print |
+| **printed at `checkpoint`**, with its rewrite passes | a work list nobody is shown is exactly what finding 1 already cost this phase once |
+
+Verified: **5 mutations, each caught** — the capture never firing, the capture firing on
+already-graded steps, the carry-forward dropped, the report ignoring the capture, and the
+outstanding count reverted. `kmpilot_report_test.py` gained a root-level feature (`stray`) because
+**the shape had to be in the fixture for any of this to be testable** — the base fixture had no
+ungradable feature at all.
+
+Two test bugs found on the way, both the familiar shape:
+
+- **The first version of the outstanding-count assertion could not fail.** It read the report
+  written by the *second* `finish`, by which time the `report` step was already `done`, the
+  adjustment was a no-op, and the assertion passed with the fix deleted. It now asserts on the
+  close that renders while the step is still open. **Only the mutation found this** — the sixth
+  decorative assertion this phase has caught, and the reason `mutation_audit.py` exists.
+- **`checkpoint` was failing silently in the existing forced-completion loop.** `migrate-plain` /
+  `migrate-bare` depend on `hoist-core-model`, which was never done, so their checkpoints were
+  refused by the dependency gate and `--force` completed steps that had never been opened. The
+  loop ignored the return code. It is asserted now, with the hoist marked skipped first.
 
 ## Project-scoped, not feature-scoped
 
