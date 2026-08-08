@@ -37,7 +37,12 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > The S7 + `shell`-step work is committed on `phase-6-kmp-to-kmpilot` — `git log --oneline -3`
 > shows it at or near the tip, above *"Correct the resume block's account of itself"*. Confirm
 > with `git status --short` (empty).
-> **Nothing has been pushed and no PR is open** — do not push unless the user says so. The
+>
+> **The branch is pushed to `origin`; no PR is open.** Check the real state rather than trusting
+> this line: `git ls-remote --heads origin phase-6-kmp-to-kmpilot` and `gh pr list`. **No CI has
+> run on any of it** — `.github/workflows/build.yml` triggers on `pull_request` only, so pushing
+> a branch verifies nothing; the green-workflow gate starts at the PR. Everything asserted in
+> this block was verified locally. The
 > authored source is the gitignored `pipeline/src`; `.claude/` is generated, so regenerate with
 > `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
 >
@@ -154,7 +159,8 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 
 ### 1. Where the work lives
 
-Branch `phase-6-kmp-to-kmpilot`, **not pushed and no PR open**. Steps 1–8: `27ddc58`
+Branch `phase-6-kmp-to-kmpilot`, **pushed, no PR open** (so no CI has run — `build.yml` is
+`pull_request`-only). Steps 1–8: `27ddc58`
 *"Discover and plan a project migration"* (steps 1–4), `82a0601` *"Add the clean phase to
 project migration"* (steps 5–7), `9169323` *"Add the integrate phase to project migration"*
 (step 8), `54f1183` *"Detect a module that holds several features"* (the shape sweep), plus
@@ -166,7 +172,7 @@ bugs that only a launch would find"* and `14fa79e` *"Prove the guards can fail"*
 from `bookshelf`), plus one commit for this block and `d6b7ce6` *"Specify the test-bed projects
 step 9 still needs"*. Then the two report-bug fixes described under *Landed
 2026-08-07*, and the S7 + `shell`-step work of *Landed 2026-08-08* (findings 23, 13 and 24) at
-the tip. **Nothing has been pushed and no PR is open** — do not push unless the user says so.
+the tip, and the branch is pushed to `origin` with no PR open.
 
 | Path | What it is |
 |---|---|
