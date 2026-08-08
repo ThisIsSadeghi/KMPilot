@@ -31,15 +31,15 @@ to read to keep going. Start it with exactly:
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **WORK IS IN FLIGHT. Read this before touching anything.**
+> **Nothing is in flight. Everything is committed and every tree is clean.**
 >
-> **KMPilot itself has 16 uncommitted files and nothing is pushed.** `git status --short`
-> should show `install.sh`, `gradle/libs.versions.toml`, `core/common/build.gradle.kts`, four
-> `.claude/skills/_shared/kmpilot_*.py`, four `.claude/skills/kmp-to-kmpilot/*.md`, four
-> `scripts/*`, and this file. **All of it is the `carve` step plus findings 10–17.** Nothing has
-> been committed — do not commit or push unless the user says so. The authored source is the
-> gitignored `pipeline/src`; `.claude/` is generated, so regenerate with
-> `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
+> The work landed as `f9b9b6a` *"Migrate a monolith end to end and fix what that exposed"* — the
+> `carve` step plus findings 10–23, 20 files, verified green before it landed (74/0 · 27/0 ·
+> 26 caught · 0 survived · 0 errors), followed by small commits correcting this block. Confirm
+> with `git status --short` (empty); `git log --oneline -5` should reach `f9b9b6a`.
+> **Nothing has been pushed and no PR is open** — do not commit or push unless the user says so.
+> The authored source is the gitignored `pipeline/src`; `.claude/` is generated, so regenerate
+> with `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
 >
 > **The `T01P05-Monolith` migration is COMPLETE and confirmed on a device.** All 8 steps done,
 > three features at 0 actionable findings, promoted to `managedFeatures`, `MIGRATION-REPORT.md`
