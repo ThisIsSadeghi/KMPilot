@@ -38,6 +38,7 @@ Every unit of work is one step with a stable id (`hoist-core-network`, `migrate-
 
 | Kind | What it does |
 |---|---|
+| `shell` | the app shell → the half of Rule 13 no feature can supply. Project-level, at most one, and only when the checker's repo-scoped `S7` fires |
 | `hoist` | a shared module → `:core:common` / `:core:data` / `:core:designsystem` |
 | `extract` | shared code living **inside** a feature → the same tiers; this is what removes a cross-feature edge |
 | `relocate` | a feature outside `feature/` → `feature/{name}/`, so the checker can grade it at all |
@@ -56,7 +57,9 @@ Every unit of work is one step with a stable id (`hoist-core-network`, `migrate-
 
 ## Order
 
-A step never precedes the code it consumes: hoists and extracts before the features that use them, `relocate` / `carve` before that feature's `migrate`, `report` last. Within that constraint the order is discovery's own topological module order.
+A step never precedes the code it consumes: the `shell` step first, then hoists and extracts before the features that use them, `relocate` / `carve` before that feature's `migrate`, `report` last. Within that constraint the order is discovery's own topological module order.
+
+The `shell` step is **first and depends on nothing**, and nothing depends on it. First because every feature this run rewrites to `XScreen` inherits its safe area from the shell — fixing the shell afterwards means promoting features into `managedFeatures` against a shell that honours none of the contract, which is exactly what happened on the monolith (three features promoted, every static gate green, the app's top edge untappable). Not a dependency edge because one refused shell step would then block every feature in the project, and a wrong refusal is the failure that costs a user's trust. Order it first, hold nothing hostage to it.
 
 A `carve` additionally waits on the `extract` for its owner module, when there is one. The shared code leaves the app module **before** the feature does — carving first would move a package whose imports are about to be rewritten under it.
 

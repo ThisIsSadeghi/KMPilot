@@ -70,7 +70,11 @@ SETTINGS_GRADLE = check.SETTINGS_GRADLE
 REPO_ROOT = check.REPO_ROOT
 PLAN_REL = plan_mod.PLAN_REL
 REPORT_REL = migrate_mod.REPORT_REL
-SHARED_STEP_KINDS = ("hoist", "extract", "relocate")
+# Every step that is not a `migrate` and not the closing `report` — the structural work
+# a reviewer needs to see happened. `carve` and `shell` were both missing: a run that
+# created three Gradle modules and rewired the app shell rendered a report mentioning
+# neither, which is the report failing at its one job (what did this run do?).
+SHARED_STEP_KINDS = ("hoist", "extract", "relocate", "carve", "shell")
 
 # What each rule was, in the words the report needs — the rewrite passes already carry
 # the goal per cluster, so this is only the one-line "what it was" column.
@@ -92,6 +96,7 @@ RULE_WAS = {
     "S4": "the deprecated `@Preview` import",
     "S5": "`@Serializable` with no serialization plugin — compiles, then crashes",
     "S6": "the screen outside `presentation/ui/`, where half the rules cannot see it",
+    "S7": "an app shell providing no safe area, which every `XScreen` depends on",
     "I1": "not included in `settings.gradle.kts`",
     "I2": "not a dependency of the app module",
     "I3": "not registered in `initKoin`",
@@ -379,9 +384,12 @@ def render(plan: dict, state: dict, promoted: list[str]) -> str:
 
     # ── shared code ─────────────────────────────────────────────────────────
     if state["shared"]:
-        w("## Shared code")
+        w("## Structural steps")
         w("")
-        w("| Module | Step | Outcome | |")
+        w("Shared code hoisted or extracted, features relocated or carved into modules, "
+          "and the app shell. Everything that is not a feature rewrite.")
+        w("")
+        w("| Subject | Step | Outcome | |")
         w("|---|---|---|---|")
         for row in state["shared"]:
             w(f"| `{row['subject']}` | {row['kind']} | {row['status']} | "

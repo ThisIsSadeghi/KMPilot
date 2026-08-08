@@ -93,6 +93,24 @@ Two limits keep it honest, both pinned by negative controls:
 
 Shared code the carved packages reach — a hand-rolled `ApiClient`, a DI container — appears
 in `inFeatureShared[]` owned by the app module, and earns an `extract` step that runs first.
+
+### `projectFindings` — the verdicts that are not about a feature
+
+Two of the checker's rules judge the **project**, not a feature: `S3` (generic core importing
+its module's stripped `.app` tier) and `S7` (an app shell providing no safe area, the half of
+Rule 13 no feature can supply). They carry feature `-` and live in `projectFindings[]`, never
+in any feature's `findingRows`.
+
+Kept separate on purpose. A project-level row attached to each feature is a bar no edit to a
+feature can clear: `complete` refuses, `--force` follows, and promotion then refuses the
+forced sign-off — the run cannot close. That is the same failure the `advisory` flag exists to
+prevent, on a different axis. The plan turns an `S7` row into one project-level `shell` step
+instead.
+
+These are also the reason discovery runs the checker **whether or not the project has a
+gradable feature**. It used to run it only when something sat under `feature/`, so a
+single-module project heard nothing — and that is precisely the shape whose shell is least
+likely to be wired.
 The declaring-file set is closed over the owner's **own** references, including same-package
 ones that carry no `import` statement: a screen importing only `AppContainer` still has to
 take the `ApiClient` that container holds, or the hoisted file references a module `:core:*`

@@ -90,6 +90,17 @@ expect_plan() {
     grep -Eq -- "$1" <<<"$PLAN_OUT" || fail "$2 ${DIM}(no plan line matching /$1/)${OFF}"
 }
 
+# reject_plan <extended-regex> <what it proves> — the negative control for PLAN output.
+# It exists because the obvious `reject` greps $OUT, which `invariant` leaves holding
+# DISCOVERY output: a `reject '^step …'` there can never match and so can never fail.
+# That is the decorative-assertion shape this suite has now found seven times, and the
+# first two shell controls were written with it.
+reject_plan() {
+    if grep -Eq -- "$1" <<<"$PLAN_OUT"; then
+        fail "$2 ${DIM}(unexpected: $(grep -Em1 -- "$1" <<<"$PLAN_OUT"))${OFF}"
+    fi
+}
+
 # ── variant harness ─────────────────────────────────────────────────────────
 
 # variant <name> <description> — copies the base fixture and sets VDIR to the copy.
@@ -1642,6 +1653,102 @@ if matches control-android-resources-application; then
     invariant "$dir"
     reject '^note  android-resources-not-enabled  :app' \
         "an AGP application module must not be told to add a block it cannot have"
+    finish
+fi
+
+# ── the app-shell half of Rule 13 (S7 + the `shell` step) ───────────────────
+#
+# `check_r13` iterates a FEATURE's sources, so it only ever enforced "a feature must
+# not nest a Scaffold". The other half — the shell must provide the safe area, because
+# `XScreen` and `XTopAppBar` add none — was checked on no project at all. A migration
+# rewrote three features to that contract and promoted them into `managedFeatures`
+# against a shell that honoured none of it: the tab row drew under the status bar and
+# its top edge was untappable, with every static gate green (step 9 finding 23).
+#
+# The fixture's own shell is `MaterialTheme { NavHost(…) }` — neither mechanism — so
+# the positive case needs no mutation. The controls are the load-bearing half: three
+# real shells conform in three different ways, and one of them is a bare `Scaffold`
+# leaning on its default `systemBars`. A check that graded WHICH mechanism would fail
+# a project that works, which is the failure this phase has already paid for twice.
+
+# shell_body <dir> <kotlin-body> — replace the fixture's shell with a given body.
+shell_body() {
+    local dir="$1" body="$2"
+    cat > "$dir/shared/src/commonMain/kotlin/$PKG_PATH/App.kt" <<SHELL
+package com.acme.notes
+
+import androidx.compose.runtime.Composable
+
+@Composable
+fun App() {
+$body
+}
+SHELL
+    git -C "$dir" add -A >/dev/null 2>&1
+    git -C "$dir" -c core.hooksPath=/dev/null -c user.email=f@l -c user.name=f \
+        commit --quiet --no-verify -m "reshape: shell body" >/dev/null 2>&1
+}
+
+if matches shell-no-safe-area; then
+    variant shell-no-safe-area "a shell with no Scaffold and no insets earns a project-level step"; dir="$VDIR"
+    invariant "$dir"
+    expect '^projectfinding  S7  warning' \
+        "a shell providing no safe area must be reported — nothing else in the app provides it"
+    expect_plan '^step  01  shell  shell ' \
+        "the shell step must be FIRST: features rewritten to XScreen inherit the shell's insets, so fixing it after the migrates is promoting them against a broken shell"
+    expect_plan '^shellwork  shell  .* agent=integrator  finding=S7' \
+        "the step must carry the S7 row it came from and route to the agent that owns the app module"
+    reject '^feature  :feature:portable .*findings=[^=]*S7' \
+        "a project-level fact must not be attached to a feature — no edit to a feature can clear it, which would make every feature uncompletable"
+    finish
+fi
+
+if matches shell-no-feature-modules; then
+    variant shell-no-feature-modules "a project with NOTHING under feature/ still gets its project-level verdict"; dir="$VDIR"
+    # The shape that made every module-level fact silent on the repo it mattered most on
+    # (finding 11), and the state `bookshelf` and the monolith both start from: the
+    # checker only grades `feature/*`, so with nothing there the gradable list is empty.
+    # Running the checker only when it has a feature to grade means the project-level
+    # checks never run either — on precisely the projects whose shell was never wired.
+    move_module "$dir" feature/notes notes :feature:notes :notes
+    move_module "$dir" feature/portable portable :feature:portable :portable
+    move_module "$dir" feature/legacy legacy :feature:legacy :legacy
+    move_module "$dir" feature/headless headless :feature:headless :headless
+    invariant "$dir"
+    expect '^projectfinding  S7  warning' \
+        "a project-level verdict must not depend on there being a feature to grade"
+    expect_plan '^step  01  shell  shell ' \
+        "the shell step is planned before any relocate or migrate, whatever the layout"
+    finish
+fi
+
+if matches control-shell-scaffold-default; then
+    variant control-shell-scaffold-default "NEGATIVE CONTROL: a bare Scaffold on its default insets"; dir="$VDIR"
+    # `bookshelf-featuredir`'s real shell, and it runs fine: Scaffold's own default
+    # `contentWindowInsets` is `systemBars`. Grading the correctness of the mechanism
+    # rather than its presence fails this project, which is a wrong failure on an
+    # already-migrated repo. Note the trailing-lambda form — no parentheses at all,
+    # the same near-miss that made `androidTarget { }` invisible in finding 4.
+    shell_body "$dir" '    Scaffold { padding -> Content(padding) }'
+    invariant "$dir"
+    reject '^projectfinding  S7' \
+        "a shell with a Scaffold provides the safe area — it must not be told it provides none"
+    reject_plan '^step .* shell  shell ' \
+        "a satisfied contract earns no step: the plan must not ask for work that is already done"
+    finish
+fi
+
+if matches control-shell-insets-no-scaffold; then
+    variant control-shell-insets-no-scaffold "NEGATIVE CONTROL: window insets applied without a Scaffold"; dir="$VDIR"
+    # The mechanisms are independent: a shell that pads for the system bars itself needs
+    # no Scaffold. Requiring BOTH would fail this, and requiring the Scaffold
+    # specifically would fail every Voyager/Decompose shell that pads its own root.
+    shell_body "$dir" '    Column(Modifier.systemBarsPadding()) { Content() }'
+    invariant "$dir"
+    reject '^projectfinding  S7' \
+        "insets without a Scaffold still provide the safe area"
+    reject_plan '^step .* shell  shell ' \
+        "a satisfied contract earns no step"
     finish
 fi
 

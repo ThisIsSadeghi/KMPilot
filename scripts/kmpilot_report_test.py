@@ -112,7 +112,12 @@ def rule_blurb_coverage(f: "Failures") -> None:
     spec2.loader.exec_module(kr)
 
     emitted = {rule for rule, _fn in kc.FEATURE_CHECKS if rule != "I"}
-    emitted |= {"I1", "I2", "I3", "I4", "S3"}
+    # Derived from the repo-scoped registry too, not a hand-kept `{"S3"}`. That literal
+    # was why the gap this assertion exists to close stayed open on the repo-scoped side:
+    # a new project-level rule could ship with no blurb and nothing would say so, which is
+    # exactly how S5 and S6 shipped printing "see kmpilot_check.py" at the reader.
+    emitted |= {rule for rule, _fn in kc.REPO_CHECKS}
+    emitted |= {"I1", "I2", "I3", "I4"}
     missing = sorted(emitted - set(kr.RULE_WAS))
     if missing:
         f.add(f"no RULE_WAS blurb for {', '.join(missing)} — the report would print "

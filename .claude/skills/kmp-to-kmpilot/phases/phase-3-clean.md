@@ -63,10 +63,22 @@ next  →  checkpoint  →  [rewrite passes]  →  verify  →  complete
    Data shape first: the UI state slots are typed by the DTOs it settles. Give the agent the cluster's `file:line` findings and its goal — not the whole feature and not a free hand.
 
    **The work list is the checker's; the behaviour contract is the existing code.** Write the brief from the file you are about to change, never from memory of it — and say plainly that nothing may be added, dropped or restyled. A paraphrase is a specification: describe a screen as showing a field it never showed and the agent will faithfully add it, producing a migration that conforms perfectly and behaves differently. That is the failure this phase calls the worst one, and it arrives through the one door no check watches — the checker cannot see it, because the extra behaviour is exactly as rule-compliant as its absence. Pre-empt the plausible-but-wrong readings too: routing a screen whose controls must stay usable through `AppLoadingState` hides them while it loads, a regression the rules would otherwise applaud. Then **ask the agent to report every behaviour delta explicitly** — that request is the only reason the one instance of this so far was caught rather than shipped.
-4. **`verify {id}`** — for a `migrate` step this re-runs `kmpilot_check.py` for that feature; a step is finished at **zero** findings. For `relocate` it checks the module actually moved and `settings.gradle.kts` followed; for `carve` it checks all four things that make a created module real (below); for `hoist`/`extract` it re-reads the project and checks the code is no longer shared from where it was.
+4. **`verify {id}`** — for a `migrate` step this re-runs `kmpilot_check.py` for that feature; a step is finished at **zero** findings. For `relocate` it checks the module actually moved and `settings.gradle.kts` followed; for `carve` it checks all four things that make a created module real (below); for `shell` it re-runs the repo-scoped `S7`; for `hoist`/`extract` it re-reads the project and checks the code is no longer shared from where it was.
 5. **`complete {id}`** — verifies again and refuses to record a step the checker still finds work in. `--force` exists for the cases the script cannot prove, and writes the sign-off down as forced: an unverified tick that reads as verified is worse than no tick.
 
 Never mark progress by hand with `kmpilot_plan.py --mark` during a run. `checkpoint` / `complete` / `refuse` keep the checkpoints and the statuses consistent with each other; `--mark` knows nothing about git.
+
+## A `shell` step — the half of Rule 13 a feature cannot supply
+
+It is the **first** step when it exists, and it exists only when the checker's repo-scoped `S7` fires: the app module holds neither a `Scaffold`/`XScaffold` nor any window-insets call, so nothing in the app provides the safe area. `XScreen` and `XTopAppBar` add none by design, which means every feature this run rewrites depends on a contract the shell is not honouring.
+
+Route it to **`integrator`** — the app module is already its territory. The step's `detail.steps` is the work in order and `detail.reference` names the source: **`patterns.md` → "Single App-Shell Scaffold"**, where Case A (no bottom nav bar) and Case B (with one) are given as complete code. Copy the case that matches this shell. This is a spec-driven edit, not a design decision — do not invent a third arrangement.
+
+Do it **before** the migrates, which is where the plan already puts it. On the monolith the shell was left as it was: three features were rewritten to `XScreen`, promoted into `managedFeatures`, and graded strictly while the tab row drew under the status bar and the top of every button was untappable — with `assembleDebug`, strict `archTest`, `kmpilot_check --all` and the iOS + desktop compiles all green. No static gate can catch it, because the features are correct; the shell they rely on is not.
+
+"The migration never edits your code" is **adopt's** promise, not this one. The clean phase rewrites working source by design, and it already edits `App.kt` — every carve repoints its imports and the Koin wiring touches the module list.
+
+A shell that already conforms earns **no step at all**, in any of the three ways it can conform (an `XScaffold` plus `windowInsetsPadding`, a `Scaffold` with explicit insets, or a bare `Scaffold` on its default `systemBars`). `S7` asks whether one of the two mechanisms is present, never which — grading the mechanism fails projects that work.
 
 ## A `carve` step — creating the module a feature never had
 
@@ -85,6 +97,21 @@ Route it to **`integrator`** — it already owns Integration Points 1 and 2, whi
 **Move, do not copy.** `verify` fails if the owner still declares the package — two modules declaring one package is a build that either fails confusingly or picks a winner silently.
 
 The rewriting to KMPilot's rules is **not** part of the carve. The carve produces a module under `feature/` that Gradle builds and the checker can grade; the `migrate` step that depends on it does the rest, and `checkpoint` prints its real work list the moment it opens.
+
+## Wiring Koin at the iOS entry point
+
+When the project had no `startKoin` of its own, `install.sh --adopt` wrote `initKmpilotKoin()` and left the call site to the run. On iOS the call site is `MainViewController`, and there is exactly one shape that compiles:
+
+```kotlin
+fun MainViewController() =
+    ComposeUIViewController(
+        configure = { initKmpilotKoin() },   // runs once, when the controller is created
+    ) { App() }
+```
+
+**Do not guard it with `GlobalContext`.** `org.koin.core.context.GlobalContext` is not in koin-core's common/native API in Koin 4.x, so a `GlobalContext.getOrNull() == null` check compiles on android and desktop — neither of which ever compiles `iosMain` — and breaks the iOS build only. That is how a migration passed `assembleDebug`, strict `archTest`, `kmpilot_check --all` at 0 errors **and** a desktop compile with iOS broken (step 9 finding 24). If a guard is genuinely wanted, `KoinPlatformTools.defaultContext().getOrNull()` is the multiplatform one; `configure` is the idiom KMPilot's own template uses and needs none.
+
+**Compile all three targets before calling the run finished** — `assembleDebug`, a desktop compile, **and** `compileKotlinIosSimulatorArm64`. Static verification is deliberate and does not compile anything; two of this phase's findings survived every green static gate, and this one survived two green *compiles* as well, because the target that was broken was the one nobody built.
 
 ## Refusing mid-rewrite
 

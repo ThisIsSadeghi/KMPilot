@@ -136,6 +136,8 @@ Feature source is protected by the `protect-feature-files.sh` hook, so before ed
 
 **One step at a time, in the order `next` gives.** Never batch steps, never pick one by eye, and never let this become a single sweeping pass over the repo — that is the failure every earlier phase was built to prevent. When a pass hits a blocker, `refuse {step} --reason "…"`: it restores the subject to its checkpoint and records the refusal in one action. A refusal is a pass; move to the next step.
 
+A **`shell`** step comes first when it exists: the app shell provides no safe area (repo-scoped `S7`), and every feature rewritten to `XScreen` inherits its insets from there. Route it to `integrator` and copy Case A / Case B from `patterns.md` → "Single App-Shell Scaffold" verbatim. Skipping it means promoting features into `managedFeatures` against a shell that breaks them, with every static gate green — that is what happened on the first monolith.
+
 A **`carve`** step is the one that creates a module rather than rewriting one — a feature that is still a package inside the app module. Route it to `integrator` and write `detail.buildFileSpec` exactly as given; it carries the JVM level, `androidResources` and serialization-plugin settings that three separate runtime crashes were traced to, none of which a build catches.
 
 Full loop, the cluster→agent map and the resume rules: @phases/phase-3-clean.md

@@ -335,6 +335,41 @@ def main() -> int:  # noqa: C901 — a linear script; splitting it would hide th
             "complete must commit its work — a finished step leaves no dirty tree",
         )
 
+        # ── the shell step: verified by S7, and it prints its own work ───────
+        # The step whose whole content lives in `detail`, so `next`/`checkpoint` printing
+        # nothing is the step reading as "no work" (finding 13). And it must not be
+        # completable while the checker still reports the finding it was derived from.
+        opened = mig(root, "checkpoint", "shell")
+        f.want(
+            opened.returncode == 0 and "1." in opened.stdout and "integrator" in opened.stdout,
+            f"opening the shell step must print its ordered work and its agent: {opened.stdout[:300]}",
+        )
+        not_yet = mig(root, "verify", "shell")
+        f.want(
+            not_yet.returncode != 0 and "S7" in not_yet.stdout,
+            f"verify shell must fail while S7 still fires, naming it: {not_yet.stdout[:300]}",
+        )
+        shell_file = root / f"shared/src/commonMain/kotlin/{PKG}/app/App.kt"
+        shell_file.write_text(
+            f"package {PKG}.app\n\n@Composable\nfun App() {{\n"
+            "    XScaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) { _ ->\n"
+            "        BaseAppNavHost(Modifier.windowInsetsPadding(WindowInsets.safeDrawing))\n"
+            "    }\n}\n",
+            encoding="utf-8",
+        )
+        wired = mig(root, "complete", "shell")
+        f.want(
+            wired.returncode == 0,
+            f"a wired shell must complete without --force: {wired.stdout[:300]}{wired.stderr[:200]}",
+        )
+        f.want(
+            {s["id"]: s for s in ledger(root)["steps"]}.get("shell", {}).get("status") == "done"
+            and "force" not in {s["id"]: s for s in ledger(root)["steps"]}
+            .get("shell", {}).get("statusReason", ""),
+            "the shell step must be recorded done, and not as forced: "
+            f"{ {s['id']: s for s in ledger(root)['steps']}.get('shell', {}) }",
+        )
+
         # ── it never re-runs discovery ──────────────────────────────────────
         # The relocate just changed what discovery would report. A regeneration here
         # would drop the `relocate` step and lapse the confirmation on the run's own

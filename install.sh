@@ -1685,8 +1685,13 @@ import org.koin.dsl.KoinAppDeclaration
  *
  *   Android — in your Application.onCreate():
  *       initKmpilotKoin { androidContext(this@MyApplication) }
- *   iOS — from your entry point:
- *       initKmpilotKoin()
+ *   iOS — in MainViewController, so it runs once when the controller is created:
+ *       ComposeUIViewController(configure = { initKmpilotKoin() }) { App() }
+ *
+ * Do not guard the iOS call with `GlobalContext`: it is not part of koin-core's
+ * common/native API in Koin 4.x, so such a guard compiles on android and desktop
+ * (neither compiles iosMain) and breaks the iOS build only. `configure` runs once
+ * and needs no guard; if you want one, use KoinPlatformTools.defaultContext().
  *
  * Already have your own DI setup? Delete this file and add `modules(kmpilotModules)`
  * to your existing startKoin instead.

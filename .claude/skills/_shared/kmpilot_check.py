@@ -84,6 +84,11 @@ travels with the code:
          exception (it references `appDataModule`, the strip seam).
     S4   `androidx.compose.ui.tooling.preview.Preview` (CMP 1.11.0+), not the
          deprecated `org.jetbrains.compose…` one.
+    S7   The other half of Rule 13, and the only repo-scoped one: `XScreen` adds no
+         insets, so the app shell has to. Fires only when the app module has
+         **neither** a `Scaffold`/`XScaffold` **nor** any window-insets call — it
+         never grades which mechanism, because three different shells conform and
+         one of them relies on `Scaffold`'s own default.
     I1-4 The four integration points every feature needs.
 
 Regex-based Kotlin parsing is approximate by design. Comments and string literals
@@ -147,6 +152,29 @@ FORBIDDEN_M3 = [
 ALLOWED_M3 = {"MaterialTheme", "Shapes", "darkColorScheme", "lightColorScheme"}
 
 APP_TIERS = ("designsystem", "data", "common")
+
+# S7 — the two mechanisms an app shell can provide the safe area with. Either one is
+# enough; the check fires only when BOTH are absent from the whole app module.
+#
+# `\w*Scaffold` so the design system's own `XScaffold` counts — `\bScaffold` cannot
+# match it (no word boundary between two word characters), the same near-miss that
+# made `XNavHost` invisible to I4 in step 9 finding 6.
+#
+# `[({]` because `Scaffold { … }` — the trailing-lambda-only form, which is what you
+# write when the content lambda is the only argument — has no parentheses at all. This
+# is finding 4 again (`androidTarget { }` was invisible for exactly this reason), and it
+# is the more common shape in a shell that has not been wired for insets yet.
+SHELL_SCAFFOLD = re.compile(r"\w*Scaffold\s*[({]")
+# `imePadding` is deliberately absent: lifting content for the keyboard says nothing
+# about the status bar, which is the inset whose absence breaks the top edge.
+SHELL_INSETS = re.compile(
+    r"\b(windowInsetsPadding|safeDrawingPadding|safeContentPadding|systemBarsPadding"
+    r"|statusBarsPadding|navigationBarsPadding|displayCutoutPadding)\s*\("
+    r"|\bcontentWindowInsets\s*="
+    r"|\bWindowInsets\.(safeDrawing|safeContent|systemBars|statusBars|displayCutout)"
+)
+# The shell composable, used only to point the finding at a file rather than a module.
+SHELL_COMPOSABLE = re.compile(r"@Composable[\s\S]{0,120}?\bfun\s+App\w*\s*\(")
 
 # Names that mark a top-level declaration as a preview/test fixture, so string
 # literals inside it are allowed under the Rule 12 allowlist.
@@ -1006,7 +1034,7 @@ def check_integration(feature, sources, ctx) -> list[dict]:
     return out
 
 
-# ─── Repo-scoped check ───────────────────────────────────────────────────────
+# ─── Repo-scoped checks ──────────────────────────────────────────────────────
 
 
 def check_s3(ctx) -> list[dict]:
@@ -1047,6 +1075,71 @@ def check_s3(ctx) -> list[dict]:
     return out
 
 
+def check_s7(ctx) -> list[dict]:
+    """S7 — the app shell has to provide the safe area, because nothing else does.
+
+    Rule 13 is a contract between two halves. `XScreen` and `XTopAppBar` deliberately
+    add **no** insets, and the one app-shell `Scaffold` pads the content with the top +
+    horizontal safe area. Every feature this pipeline writes relies on that. But
+    `check_r13` iterates a *feature's* sources, so it only ever enforces the half that
+    says a feature must not nest a Scaffold; the half that says the shell must provide
+    the insets was never checked, on any project.
+
+    A migration is where that costs something. Three features were rewritten to the
+    contract, promoted to `managedFeatures` and graded strictly in a project whose shell
+    is `MaterialTheme { Surface { Column { … } } }` — no Scaffold, no insets. The tab row
+    drew under the status bar and the top of every button was untappable, with
+    `assembleDebug`, strict `archTest`, `kmpilot_check --all` and the iOS + desktop
+    compiles all green (step 9 finding 23).
+
+    It detects the **absence of both mechanisms**, and never grades the correctness of
+    one. Of the four shells surveyed, three conform in three different ways —
+    `XScaffold` + `windowInsetsPadding`, `Scaffold` + `contentWindowInsets(0,0,0,0)` +
+    `safeDrawing`, and a bare `Scaffold` leaning on its default `systemBars` (which runs
+    fine) — and only the fourth has neither. Grading correctness would fail the third,
+    and wrongly failing an already-working project is the failure this phase has paid
+    for twice (findings 1 and 18).
+
+    Repo-scoped for the same reason S3 is. Attached per feature it becomes finding 1
+    verbatim: a project-level fact repeated N times that no edit to any feature can
+    clear, making every feature uncompletable, forcing `--force`, and then having
+    promotion refuse the forced sign-off. Severity `warning`.
+    """
+    root, app_module = ctx["root"], ctx["app_module"]
+    src = root / app_module / "src"
+    if not src.is_dir():
+        return []
+    sources = [
+        p
+        for p in sorted(src.rglob("*.kt"))
+        if "build" not in p.relative_to(src).parts
+        and not TEST_SOURCESET.search(p.relative_to(src).parts[0])
+    ]
+    if not sources:
+        return []  # nothing to judge — no Kotlin in the app module at all
+    shell_file = None
+    for path in sources:
+        code = blank_noncode(read(path))
+        if SHELL_SCAFFOLD.search(code) or SHELL_INSETS.search(code):
+            return []
+        if shell_file is None and SHELL_COMPOSABLE.search(code):
+            shell_file = path
+    # No shell file identified either: point at the app module, which is where the
+    # work goes. A path that exists beats a guess at a file name that may not.
+    where = (shell_file.relative_to(root).as_posix() if shell_file else app_module)
+    return [
+        violation(
+            "-", "S7", "warning", where, 0,
+            f"nothing in `{app_module}` provides the safe area — no `Scaffold`/"
+            "`XScaffold` and no window-insets call anywhere in the app module, while "
+            "feature screens use `XScreen`, which adds none (Rule 13). Content draws "
+            "under the status bar and the top edge of the first row is untappable. Wire "
+            "the shell per patterns.md → \"Single App-Shell Scaffold\": Case A (no bottom "
+            "nav bar) or Case B (with one)",
+        )
+    ]
+
+
 # ─── Driver ──────────────────────────────────────────────────────────────────
 
 FEATURE_CHECKS = [
@@ -1068,8 +1161,19 @@ FEATURE_CHECKS = [
     ("S6", check_s6),
     ("I", check_integration),  # I1-I4
 ]
-# 16 feature-scoped checks + 4 integration points + 1 repo-scoped boundary check.
-CHECK_COUNT = (len(FEATURE_CHECKS) - 1) + 4 + 1
+
+# Repo-scoped: one verdict for the project, reported outside the per-feature loop.
+# A registry rather than two direct calls, so the report's `RULE_WAS` table can be
+# derived from it — S5 and S6 both shipped with no blurb and printed "see
+# kmpilot_check.py" to the reader (step 9 finding 22), and that test could only
+# derive the feature-scoped half.
+REPO_CHECKS = [
+    ("S3", check_s3),
+    ("S7", check_s7),
+]
+
+# 16 feature-scoped checks + 4 integration points + the repo-scoped checks.
+CHECK_COUNT = (len(FEATURE_CHECKS) - 1) + 4 + len(REPO_CHECKS)
 
 SEVERITY_ORDER = {"error": 0, "warning": 1}
 
@@ -1286,7 +1390,12 @@ def run(root: Path, features: list[str]) -> tuple[list[dict], dict]:
         sources = collect_sources(root, root / "feature" / feature)
         for _id, fn in FEATURE_CHECKS:
             violations.extend(fn(feature, sources, ctx))
-    violations.extend(check_s3(ctx))
+    # Repo-scoped checks run whether or not this project has a gradable feature. A
+    # single-module project has none, and that is exactly the shape whose shell is most
+    # likely to provide nothing (step 9 findings 11 and 23: every module-level fact was
+    # gated behind "is this a feature" and so was silent on the repo that needed it).
+    for _id, fn in REPO_CHECKS:
+        violations.extend(fn(ctx))
     violations.sort(
         key=lambda v: (SEVERITY_ORDER.get(v["severity"], 9), v["file"], v["line"], v["rule"])
     )

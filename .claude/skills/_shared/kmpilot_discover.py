@@ -92,7 +92,10 @@ REPO_ROOT = check.REPO_ROOT
 # 2 — feature rows carry `findingRows`: the checker's own violations with file:line,
 #     not just per-rule counts. The plan phase groups them into rewrite passes, so a
 #     count alone would have sent it back to the checker for a second opinion.
-SCHEMA_VERSION = 2
+# 3 — `projectFindings`: the checker's repo-scoped rows (S3, S7), which used to be
+#     dropped on the floor. The plan derives its `shell` step from one of them, so a
+#     schema-2 report would silently produce a plan with no shell step at all.
+SCHEMA_VERSION = 3
 
 # ─── Android-locked APIs ─────────────────────────────────────────────────────
 
@@ -983,11 +986,21 @@ def discover(root: Path) -> dict:
         modules[p].name for p in features if modules[p].dir_rel.startswith("feature/")
     )
     findings: dict[str, list[dict]] = {}
-    if gradable:
-        violations, _ = check.run(root, gradable)
-        for v in violations:
-            if v["feature"]:
-                findings.setdefault(v["feature"], []).append(v)
+    # Not gated on `gradable`. The checker's repo-scoped checks are facts about the
+    # **project** and a single-module project has no gradable feature at all — which is
+    # exactly the shape whose shell provides nothing (step 9 finding 23). Gating the
+    # call on there being a feature to grade is finding 11 again: a check silent on the
+    # one repo it existed for.
+    project_violations: list[dict] = []
+    violations, _ = check.run(root, gradable)
+    for v in violations:
+        # Repo-scoped rows carry feature `-`, which is truthy — they used to land in a
+        # `findings["-"]` bucket no feature ever read, so S3 was silently dropped from
+        # every discovery report.
+        if v["feature"] and v["feature"] != "-":
+            findings.setdefault(v["feature"], []).append(v)
+        else:
+            project_violations.append(v)
 
     notes: list[dict] = []
     refusals: list[dict] = []
@@ -1600,6 +1613,23 @@ def discover(root: Path) -> dict:
             "coreJvmTarget": core_jvm_target,
             "coreAndroidResources": core_android_resources,
         },
+        # Repo-scoped rule findings — the checker's verdicts about the project rather
+        # than about a feature (S3, S7). Kept separate from every feature's `findingRows`
+        # on purpose: no edit to a feature can clear one, so counting them per feature
+        # would hold every feature at a bar it cannot reach (the advisory rule of
+        # finding 1, applied to a different axis). The plan turns an S7 row into its own
+        # project-level `shell` step.
+        "projectFindings": [
+            {
+                "rule": v["rule"],
+                "severity": v["severity"],
+                "file": v["file"],
+                "line": v["line"],
+                "message": v["message"],
+                **({"advisory": True} if v.get("advisory") else {}),
+            }
+            for v in project_violations
+        ],
         "modules": [
             {
                 "gradlePath": p,
@@ -1642,6 +1672,9 @@ def discover(root: Path) -> dict:
             "sharedPackages": len(shared_rows),
             "hoistable": sum(1 for s in shared_rows if s["hoistable"]),
             "findings": sum(f["findingCount"] for f in feature_rows),
+            # Counted separately from `findings`, which means per-feature work. A
+            # project-level row is work too, but nobody clears it by editing a feature.
+            "projectFindings": len(project_violations),
             "notes": len(notes),
         },
     }
@@ -1682,6 +1715,9 @@ def print_compact(report: dict) -> None:
         print(f"refusal  {r['subject']}  {r['kind']}  {r['reason']}")
     for n in report["notes"]:
         print(f"note  {n['id']}  {n['subject']}  {n['message']}")
+    for v in report.get("projectFindings", []):
+        print(f"projectfinding  {v['rule']}  {v['severity']}  {v['file']}:{v['line']}  "
+              f"{v['message']}")
     if report["graph"]["order"]:
         print("order  " + "  ".join(report["graph"]["order"]))
 
@@ -1770,6 +1806,18 @@ def print_grouped(report: dict, color: Palette) -> None:
         for line in r["evidence"][:4]:
             print(f"    {color.dim}{line}{color.off}")
 
+    # Repo-scoped findings are shown under their own heading, never folded into a
+    # feature's counts: they are facts about the project, and no edit to a feature
+    # clears one. The `shell` step in the plan is derived from the S7 row here.
+    if report.get("projectFindings"):
+        print(f"\n{color.bold}PROJECT-LEVEL FINDINGS ({len(report['projectFindings'])}){color.off}")
+        for v in report["projectFindings"]:
+            tint = color.error if v["severity"] == "error" else color.warning
+            print(f"  {tint}{v['rule']:<6}{color.off}{color.dim}{v['file']}"
+                  + (f":{v['line']}" if v["line"] else "")
+                  + f"{color.off}")
+            wrap(v["message"], "    ")
+
     if report["notes"]:
         # Grouped by id: the same note on five modules is one fact about the project,
         # and five copies of it buries the four other notes. The JSON keeps them
@@ -1789,7 +1837,9 @@ def print_grouped(report: dict, color: Palette) -> None:
           f"conforming"
           + (f" · {s['owned']} KMPilot-owned with findings" if s["owned"] else "")
           + f" · {s['refused']} refused · {s['sharedPackages']} shared package(s) "
-          f"({s['hoistable']} hoistable) · {s['findings']} rule finding(s) · {s['notes']} note(s)")
+          f"({s['hoistable']} hoistable) · {s['findings']} rule finding(s)"
+          + (f" + {s['projectFindings']} project-level" if s.get("projectFindings") else "")
+          + f" · {s['notes']} note(s)")
     print(f"{color.bold}DISCOVERY ONLY — nothing was written{color.off}")
 
 

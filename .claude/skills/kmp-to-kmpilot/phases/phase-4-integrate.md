@@ -49,6 +49,7 @@ What it must contain, and why each part is not optional:
 | Section | Why |
 |---|---|
 | What changed, per rule — before from the confirmed plan, after from a live checker run | the only quantitative answer to "what did this actually do" |
+| Every **structural** step — hoists, extracts, relocations, carves and the app shell | these are the edits that are not a feature rewrite, and a run that created three Gradle modules and rewired the shell used to render a report mentioning none of them |
 | Every refusal, with its reason and evidence, whether found at discovery or mid-rewrite | a refusal nobody wrote down is indistinguishable from a bug |
 | Features with **no test source set** | tests are out of scope, so naming the untested features *is* the mitigation. These carry the most behavioural risk in the run |
 | Features whose test source sets outlived the rewrite | they still reference the types that were replaced; expect them not to compile, and regenerate with `/test-feature` |

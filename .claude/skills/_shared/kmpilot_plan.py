@@ -96,7 +96,10 @@ PLAN_SCHEMA_VERSION = 2
 
 # `findingRows` — the per-feature work list with file:line — arrived in discovery
 # schema 2. A plan built from schema 1 would silently carry empty rewrite passes.
-MIN_DISCOVERY_SCHEMA = 2
+# `projectFindings` arrived in schema 3, and the `shell` step is derived from it: an
+# older report produces a plan with no shell step and no way to tell that from a
+# project whose shell already conforms. Loud beats silent.
+MIN_DISCOVERY_SCHEMA = 3
 
 # ─── Rewrite passes ──────────────────────────────────────────────────────────
 
@@ -165,7 +168,8 @@ OTHER_CLUSTER = ("other", None, "unrouted rule findings — assign a layer by ha
 # sides: both put a feature under `feature/` so the checker can grade it. `relocate`
 # moves a module that exists; `carve` creates one that does not.
 STEP_KIND_RANK = {
-    "hoist": 0, "extract": 0, "carve": 1, "relocate": 1, "migrate": 2, "report": 3,
+    "shell": 0, "hoist": 0, "extract": 0, "carve": 1, "relocate": 1, "migrate": 2,
+    "report": 3,
 }
 
 VALID_TIERS = ("common", "data", "designsystem", "split")
@@ -355,6 +359,81 @@ def build_file_spec(report: dict, feature: dict) -> dict:
     }
 
 
+def shell_steps(report: dict, taken: set[str]) -> list[dict]:
+    """The `shell` step: bring the app shell up to the half of Rule 13 it owns.
+
+    Derived from the checker's S7 row, never from reading the shell here — the same
+    contract every other rule finding in this plan obeys, so a migration and a CI run
+    cannot disagree about whether the shell conforms. No S7 row means no step, which is
+    also how "already satisfied" is expressed: KMPilot itself and `bookshelf` see nothing.
+
+    Ranked with `hoist`/`extract`, i.e. **before** every `migrate`, because a feature
+    rewritten to `XScreen` inherits the shell's safe area — three features were promoted
+    to `managedFeatures` against a shell that provided none, with every static gate green
+    and the app's top edge untappable (step 9 finding 23).
+
+    It is deliberately **not** a `dependsOn` of the migrate steps. Rank orders it first;
+    an edge would let one refused shell step block every feature in the project, which is
+    the wrong-refusal failure invariant 3 exists to prevent. The order is a preference
+    here, not a precondition: a feature rewritten before the shell is fixed still
+    conforms, it just looks wrong until the shell lands.
+
+    "The migration never edits your code" is *adopt's* promise, not this one — the clean
+    phase rewrites working source by design, and it already edits `App.kt` (every carve
+    repoints its imports, and Koin wiring touches the module list).
+    """
+    rows = [v for v in report.get("projectFindings", []) if v["rule"] == "S7"]
+    if not rows:
+        return []
+    row = rows[0]
+    app_module = report["project"]["appModule"]
+    return [
+        {
+            "id": unique("shell", taken),
+            "kind": "shell",
+            "subject": app_module,
+            "title": f"wire {app_module}'s app shell to provide the safe area (Rule 13)",
+            "status": "pending",
+            "statusReason": "",
+            "dependsOn": [],
+            "blockedBy": [],
+            "needsDecision": False,
+            "detail": {
+                "appModule": app_module,
+                "agent": "integrator",
+                "finding": row,
+                "reference": 'patterns.md → "Single App-Shell Scaffold" — Case A (no '
+                "bottom nav bar) and Case B (with one) are given there in full; copy the "
+                "one that matches this shell rather than inventing a third",
+                "steps": [
+                    f"wrap {app_module}'s shell content in the ONE Scaffold/XScaffold "
+                    "with contentWindowInsets = WindowInsets(0, 0, 0, 0) (it consumes "
+                    "nothing; the shell applies the insets itself)",
+                    "pad the nav host / shell content with WindowInsets.safeDrawing.only("
+                    "WindowInsetsSides.Top + WindowInsetsSides.Horizontal) and "
+                    ".imePadding() — top + horizontal only",
+                    "leave the BOTTOM inset to each screen: a bottom action bar bleeds "
+                    "its background to the edge and pads its own content with "
+                    "WindowInsets.navigationBars.exclude(WindowInsets.ime); a full-bleed "
+                    "scroll screen pads its own list",
+                    "Case B only (a bottom nav bar exists): capture innerPadding, pad the "
+                    "nav host with .padding(bottom = innerPadding.calculateBottomPadding()"
+                    "), and pass XNavigationBar windowInsets = "
+                    "NavigationBarDefaults.windowInsets",
+                    "do NOT add insets inside XScreen/XTopAppBar and do NOT nest a "
+                    "Scaffold in any feature — that is the half of Rule 13 R13 already "
+                    "checks, and doing both double-pads the safe area",
+                ],
+                "why": "XScreen and XTopAppBar add no insets by design, so the shell is "
+                "the only place the safe area can come from. Every feature this migration "
+                "rewrites depends on that, and no edit to a feature can supply it — which "
+                "is why this is one project-level step rather than a finding repeated on "
+                "each feature.",
+            },
+        }
+    ]
+
+
 def build_steps(
     report: dict,
     decisions: dict,
@@ -373,6 +452,9 @@ def build_steps(
         if override and override != proposed:
             return override, "user"
         return proposed, "proposal"
+
+    # ── the app shell → the other half of Rule 13 ───────────────────────────
+    steps.extend(shell_steps(report, taken))
 
     # ── shared code → :core:* ───────────────────────────────────────────────
     for row in report["shared"]:
@@ -691,14 +773,22 @@ def order_steps(steps: list[dict], order: list[str]) -> list[dict]:
     order and sorts last, which is also where its `blocked` status wants it.
     """
     position = {node: i for i, node in enumerate(order)}
-    rank = {
-        s["id"]: (
-            position.get(s["subject"], len(order)),
-            STEP_KIND_RANK.get(s["kind"], 9),
-            s["id"],
+
+    def slot(step: dict) -> tuple:
+        # A `shell` step's subject is the app module, which depends on everything and so
+        # sorts LAST in the topological order — the opposite of where it belongs. It is a
+        # project-level step, not a module in the graph, so the module order says nothing
+        # about it and its kind rank decides alone. Without this the shell was ordered
+        # after every migrate, which is the one thing finding 23 says must not happen.
+        if step["kind"] == "shell":
+            return (-1, STEP_KIND_RANK["shell"], step["id"])
+        return (
+            position.get(step["subject"], len(order)),
+            STEP_KIND_RANK.get(step["kind"], 9),
+            step["id"],
         )
-        for s in steps
-    }
+
+    rank = {s["id"]: slot(s) for s in steps}
     by_id = {s["id"]: s for s in steps}
     remaining = {s["id"]: {d for d in s["dependsOn"] if d in by_id} for s in steps}
 
@@ -976,6 +1066,11 @@ def print_compact(plan: dict) -> None:
             for rewrite in step["detail"]["passes"]:
                 print(f"pass  {step['id']}  {rewrite['cluster']}  agent={rewrite['agent'] or '-'}  "
                       f"rules={','.join(rewrite['rules'])}  findings={rewrite['findingCount']}")
+        if step["kind"] == "shell":
+            print(f"shellwork  {step['id']}  {step['detail']['appModule']}  "
+                  f"agent={step['detail']['agent']}  "
+                  f"finding={step['detail']['finding']['rule']}  "
+                  f"steps={len(step['detail']['steps'])}")
     for step_id, decision in sorted(plan["decisions"].items()):
         print(f"decision  {step_id}  tier={decision['tier']}  at={decision.get('at', '-')}")
     for note in plan["planNotes"]:
@@ -1026,6 +1121,9 @@ def print_grouped(plan: dict, color: Palette, path: Path | None) -> None:
                 files = step["detail"].get("filesByTier") or {}
                 for tier, names in sorted(files.items()):
                     wrap(f"{tier}: {', '.join(Path(f).name for f in names)}", "           ")
+        if step["kind"] == "shell" and step["status"] in ("pending", "in-progress"):
+            wrap(f"{step['detail']['finding']['rule']} ({step['detail']['agent']}) — "
+                 + step["detail"]["finding"]["message"], "         ")
         if step["kind"] == "migrate" and step["status"] in ("pending", "in-progress"):
             for rewrite in step["detail"]["passes"]:
                 agent = rewrite["agent"] or "unrouted"

@@ -173,6 +173,96 @@ MUTATIONS: list[dict] = [
         "new": "",
         "guard": ("matrix", "control-android-resources-application"),
     },
+    # ── S7 + the shell step: the other half of Rule 13 (finding 23) ────────
+    {
+        "id": "s7-never-fires",
+        "why": "a shell providing no safe area is never reported, so features are "
+               "rewritten to XScreen and promoted against it — the app's top edge is "
+               "untappable with every static gate green",
+        "file": "kmpilot_check.py",
+        "old": '        if SHELL_SCAFFOLD.search(code) or SHELL_INSETS.search(code):\n'
+               '            return []',
+        "new": "        if True:\n            return []",
+        "guard": ("matrix", "shell-no-safe-area"),
+    },
+    {
+        "id": "s7-demands-a-scaffold",
+        "why": "a shell that pads for the system bars itself is told it provides no safe "
+               "area — every Voyager/Decompose shell without a Scaffold turns red",
+        "file": "kmpilot_check.py",
+        "old": "        if SHELL_SCAFFOLD.search(code) or SHELL_INSETS.search(code):",
+        "new": "        if SHELL_SCAFFOLD.search(code):",
+        "guard": ("matrix", "control-shell-insets-no-scaffold"),
+    },
+    {
+        "id": "s7-scaffold-needs-parens",
+        "why": "`Scaffold { … }` — the trailing-lambda form — is invisible, so a working "
+               "shell is told to add the Scaffold it already has (finding 4's near-miss)",
+        "file": "kmpilot_check.py",
+        "old": r'SHELL_SCAFFOLD = re.compile(r"\w*Scaffold\s*[({]")',
+        "new": r'SHELL_SCAFFOLD = re.compile(r"\w*Scaffold\s*\(")',
+        "guard": ("matrix", "control-shell-scaffold-default"),
+    },
+    {
+        "id": "s7-attached-per-feature",
+        "why": "the project-level row is counted against each feature, so no edit to any "
+               "feature can complete it: `complete` refuses, `--force` follows, and "
+               "promotion refuses the forced sign-off (finding 1's failure)",
+        "file": "kmpilot_migrate.py",
+        "old": '        violations = [v for v in all_rows if v.get("feature") == feature]',
+        "new": "        violations = all_rows",
+        "guard": ("test", "kmpilot_migrate_test.py"),
+    },
+    {
+        "id": "shell-step-after-migrates",
+        "why": "the shell step sorts by the app module's topological position, which is "
+               "LAST, so the features are rewritten and promoted before it is fixed",
+        "file": "kmpilot_plan.py",
+        "old": '        if step["kind"] == "shell":\n            return (-1, STEP_KIND_RANK["shell"], step["id"])',
+        "new": "        if False:\n            return ()",
+        "guard": ("test", "kmpilot_plan_test.py"),
+    },
+    {
+        "id": "shell-step-always-planned",
+        "why": "a project whose shell already conforms is handed work that is already "
+               "done — KMPilot itself and bookshelf would both grow a step",
+        "file": "kmpilot_plan.py",
+        "old": '    rows = [v for v in report.get("projectFindings", []) if v["rule"] == "S7"]\n'
+               "    if not rows:\n        return []",
+        "new": '    rows = [v for v in report.get("projectFindings", []) if v["rule"] == "S7"]\n'
+               '    rows = rows or [{"rule": "S7", "severity": "warning", "file": "-", '
+               '"line": 0, "message": "-"}]\n    if False:\n        return []',
+        "guard": ("matrix", "control-shell-scaffold-default"),
+    },
+    {
+        "id": "shell-verified-by-nothing",
+        "why": "`verify shell` passes while the checker still reports S7, so the step is "
+               "completable without the shell ever being wired",
+        "file": "kmpilot_migrate.py",
+        "old": '        rows = [v for v in violations if v["rule"] == "S7"]',
+        "new": "        rows = []",
+        "guard": ("test", "kmpilot_migrate_test.py"),
+    },
+    {
+        "id": "project-findings-dropped",
+        "why": "discovery keeps bucketing repo-scoped rows under a feature named `-` that "
+               "nobody reads, so S3 and S7 vanish from every report and no shell step is "
+               "ever planned",
+        "file": "kmpilot_discover.py",
+        "old": '        if v["feature"] and v["feature"] != "-":',
+        "new": '        if v["feature"]:',
+        "guard": ("matrix", "shell-no-safe-area"),
+    },
+    {
+        "id": "repo-checks-need-a-feature",
+        "why": "the checker is only run when a gradable feature exists, so a single-module "
+               "project — the shape most likely to have no shell insets — hears nothing "
+               "(finding 11 again)",
+        "file": "kmpilot_discover.py",
+        "old": "    violations, _ = check.run(root, gradable)",
+        "new": "    violations = [] if not gradable else check.run(root, gradable)[0]",
+        "guard": ("matrix", "shell-no-feature-modules"),
+    },
     # ── I4: the nav host is usually a wrapper (step 9, finding 6) ──────────
     {
         "id": "i4-wrapper-blind",

@@ -261,12 +261,30 @@ def verify_step(root: Path, step: dict, plan: dict | None = None) -> tuple[bool,
                 )
         return (not problems), (problems or [f"{REPORT_REL} written; every done feature promoted"])
 
+    if kind == "shell":
+        # Verified by the same check that created the step — S7. Asking the shell a second
+        # way here (does it have a Scaffold? does it call windowInsetsPadding?) is how a
+        # step comes to be completable while the checker still reports the finding, which
+        # is the disagreement `verify` exists to prevent.
+        violations, _ = check.run(root, [])
+        rows = [v for v in violations if v["rule"] == "S7"]
+        if not rows:
+            return True, [f"{step['detail']['appModule']}: the app shell provides the safe area"]
+        return False, [f"  S7     {v['file']}  {v['message']}" for v in rows]
+
     if kind == "migrate":
         feature = step["detail"]["feature"]
         if not (root / "feature" / feature).is_dir():
             mover = "carve" if step["detail"].get("location") == "in-module" else "relocate"
             return False, [f"feature/{feature}/ does not exist — the {mover} step has not run"]
-        violations, _ = check.run(root, [feature])
+        all_rows, _ = check.run(root, [feature])
+        # This feature's rows only. `check.run` also returns the repo-scoped checks (S3,
+        # S7), which carry feature `-` and describe the *project*: no edit to this feature
+        # can clear one, so counting them here holds every feature in the repo at a bar it
+        # cannot reach — `complete` refuses, `--force` follows, and promotion then refuses
+        # the forced sign-off. That is step 9 finding 1 exactly, and it is why the shell
+        # contract is a step of its own rather than a finding attached to each feature.
+        violations = [v for v in all_rows if v.get("feature") == feature]
         # The bar is the work, not the row count. An advisory finding has no fix, so
         # holding the step until it clears is a step that can never complete — and the
         # forced completion that follows is what promotion then refuses, leaving the run
@@ -449,7 +467,55 @@ def cmd_next(root: Path, plan: dict, args, color: Palette) -> int:
         for finding in rewrite["findings"][:6]:
             print(f"       {color.dim}{finding['file']}:{finding['line']}  "
                   f"{finding['message']}{color.off}")
+    print_work_detail(step, color)
     return 0
+
+
+def print_work_detail(step: dict, color: Palette) -> None:
+    """The work a non-`migrate` step carries, which is all in its `detail`.
+
+    A `migrate` step's work is its rewrite passes, and those are printed. Every other
+    kind keeps its instructions in `detail` — `symbols`/`declaredIn`/`evidence` for a
+    `hoist` or `extract`, an ordered `steps` list plus a `buildFileSpec` for a `carve`,
+    an ordered `steps` list for a `shell` — and `next` showed none of it, so the operator
+    had to open the ledger JSON to find out what the step actually asks for (step 9
+    finding 13). A work list nobody is shown has already cost this phase once: finding 1
+    was an empty pass list read as "nothing to do", worked as finished, and then refused
+    by `verify` for findings nobody saw.
+    """
+    detail = step["detail"]
+    agent = detail.get("agent")
+    if agent:
+        print(f"  {color.dim}agent: {agent}{color.off}")
+    if detail.get("reason") and step["kind"] in ("hoist", "extract"):
+        print(f"  → {detail.get('target', '')}: {detail['reason']}")
+    for i, line in enumerate(detail.get("steps", []), 1):
+        print(f"  {i}. {line}")
+    symbols = detail.get("symbols") or []
+    if symbols:
+        print(f"  {color.dim}symbols: {', '.join(symbols[:8])}"
+              + (f" … and {len(symbols) - 8} more" if len(symbols) > 8 else "")
+              + f"{color.off}")
+    for line in (detail.get("evidence") or [])[:4]:
+        print(f"  {color.dim}{line}{color.off}")
+    if detail.get("reference"):
+        print(f"  {color.dim}see: {detail['reference']}{color.off}")
+    # The build file a carve has to write. Printed as the key=value pairs it is, not as
+    # prose: these are the three settings every runtime crash this phase found was
+    # traced to, and a paraphrase of them is how one gets dropped.
+    spec = detail.get("buildFileSpec")
+    if spec:
+        print(f"  {color.bold}buildFileSpec{color.off} {color.dim}(write it as given)"
+              f"{color.off}")
+        for key in ("gradlePath", "dir", "namespace", "catalogAccessor", "jvmTarget",
+                    "androidResources", "serializationPlugin", "composeResources"):
+            if key in spec:
+                print(f"       {key} = {spec[key]}")
+        for key in ("targets", "coreDeps", "rewriteDeps"):
+            if spec.get(key):
+                print(f"       {key} = {', '.join(str(v) for v in spec[key])}")
+    if detail.get("why"):
+        print(f"  {color.dim}why: {detail['why']}{color.off}")
 
 
 def cmd_checkpoint(root: Path, plan: dict, step: dict, args, color: Palette) -> int:
@@ -488,6 +554,9 @@ def cmd_checkpoint(root: Path, plan: dict, step: dict, args, color: Palette) -> 
         for rewrite in regrade["passes"]:
             print(f"  pass {rewrite['cluster']:<14} agent={rewrite['agent'] or 'unrouted':<11} "
                   f"{','.join(rewrite['rules'])} ×{rewrite['findingCount']}")
+    # Same reason it is printed by `next`: `checkpoint` is where the work is picked up,
+    # and a step whose instructions live in `detail` reads as having none (finding 13).
+    print_work_detail(step, color)
     print(f"  restore it with: kmpilot_migrate.py restore {step['id']}")
     return 0
 

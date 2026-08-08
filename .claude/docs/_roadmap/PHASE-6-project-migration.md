@@ -21,41 +21,52 @@ and a rewrite core, and splitting them across two phase files would duplicate th
 
 ---
 
-## ▶ Resume here (2026-08-07, later session) — cold-start contract
+## ▶ Resume here (2026-08-08) — cold-start contract
 
 Steps 1–8 are **done and verified**. Step 9 — running it against real repos — is **under way:
-three repos, twenty-three findings, all fixed**. This block is the only thing a fresh session has
-to read to keep going. Start it with exactly:
+three repos, twenty-four findings, all fixed or explicitly recorded**. This block is the only
+thing a fresh session has to read to keep going. Start it with exactly:
 
 ```
 read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 ```
 
-> **Nothing is in flight. Everything is committed and every tree is clean.**
+> **Findings 23, 13 and 24 are DONE and committed. Nothing is in flight; the KMPilot tree is
+> clean.**
 >
-> The work landed as `f9b9b6a` *"Migrate a monolith end to end and fix what that exposed"* — the
-> `carve` step plus findings 10–23, 20 files, verified green before it landed (74/0 · 27/0 ·
-> 26 caught · 0 survived · 0 errors), followed by small commits correcting this block. Confirm
-> with `git status --short` (empty); `git log --oneline -5` should reach `f9b9b6a`.
-> **Nothing has been pushed and no PR is open** — do not commit or push unless the user says so.
-> The authored source is the gitignored `pipeline/src`; `.claude/` is generated, so regenerate
-> with `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
+> The S7 + `shell`-step work is committed on `phase-6-kmp-to-kmpilot` — `git log --oneline -3`
+> shows it at or near the tip, above *"Correct the resume block's account of itself"*. Confirm
+> with `git status --short` (empty).
+> **Nothing has been pushed and no PR is open** — do not push unless the user says so. The
+> authored source is the gitignored `pipeline/src`; `.claude/` is generated, so regenerate with
+> `python3 scripts/gen-surfaces.py` and never edit `.claude/skills` directly.
 >
-> **The `T01P05-Monolith` migration is COMPLETE and confirmed on a device.** All 8 steps done,
-> three features at 0 actionable findings, promoted to `managedFeatures`, `MIGRATION-REPORT.md`
-> written. Android + desktop + iOS compile, strict `archTest` green, and **the app runs**: Books
-> lists Open Library results through the migrated `data.app` remote layer, Authors aggregates
-> over the same shared datasource, Settings shows "207 Kotlin books found on Open Library"
-> matching `numFound: 207` on the wire, and both toggles stay usable while stats load. No
-> `MissingResourceException`, no `SerializerNotFoundException`, no Koin resolution failure —
-> the three crash classes findings 3, 8 and 15 were about. `git switch -` in that repo undoes
-> the whole run.
+> **Verified green before this block was written:** all five self-tests · `migrate-matrix.sh`
+> **78/0** · `adopt-matrix.sh` 27/0 · `mutation_audit.py` **35 caught · 0 survived** ·
+> `gen-surfaces.py --check` · `kmpilot_check.py --all` **22 checks, 0 errors 0 warnings**.
 >
-> **The one defect the launch found is finding 23** — the tab row draws under the status bar and
-> its top edge is untappable. Pre-existing in the shell, but it is the half of Rule 13 that
-> `check_r13` never inspects, and three features were promoted against it. **The fix is decided
-> and written up under finding 23 below — a repo-scoped `S3`-style check plus a project-level
-> `shell` step — but NOT implemented. It is the first thing to pick up.**
+> **What landed:** repo-scoped check **S7** (the app shell must provide a safe area — the half of
+> Rule 13 `check_r13` cannot see) and a project-level **`shell` step**, ranked ahead of every
+> migrate and derived from the S7 row. Plus **finding 13** (`next` / `checkpoint` now print a
+> step's `detail` work list) and **finding 24** (the iOS Koin idiom). Three plumbing bugs came
+> out with them: `verify_step` never filtered the checker's rows to the feature it was verifying,
+> discovery dropped every repo-scoped row on the floor (`"-"` is truthy), and discovery ran the
+> checker only `if gradable:` — silent on exactly the single-module shape that needs it. Full
+> write-up: *Landed 2026-08-08* below.
+>
+> **`T01P05-Monolith` is now actually green on all three targets.** The `shell` step was run
+> there for real (regenerate plan → confirmation lapsed as designed → `--confirm` → `checkpoint
+> shell` → Case A applied to `App.kt` → `verify` → `complete`, committed `17d3dab`). Android
+> `assembleDebug`, `compileKotlinDesktop`, strict `archTest`, both iOS targets, and
+> `kmpilot_check --all` at 22 checks · 0 errors · 3 warnings (the known advisory I4 rows).
+> **Two things are uncommitted in that repo**: the finding-24 fix to
+> `composeApp/src/iosMain/.../MainViewController.kt` and the regenerated `MIGRATION-REPORT.md`.
+> `git switch -` still undoes the whole run.
+>
+> **The on-device confirmation of finding 23 is the one thing NOT done** — this machine has no
+> device and no AVD (`adb devices` empty, `emulator -list-avds` empty). The static and build
+> evidence is complete; what is missing is a human tapping the top edge of the tab row and seeing
+> it respond. Ask the user to run it, or wait until a device is attached.
 >
 > **The test bed carries a snapshot of the pipeline.** `install.sh --adopt` vendors
 > `.claude/skills` at adoption time, so a test bed adopted before a pipeline change silently
@@ -70,11 +81,17 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > python3 scripts/kmpilot_check_test.py     python3 scripts/kmpilot_migrate_test.py
 > python3 scripts/kmpilot_discover_test.py  python3 scripts/kmpilot_report_test.py
 > python3 scripts/kmpilot_plan_test.py      python3 scripts/gen-surfaces.py --check
-> bash   scripts/migrate-matrix.sh          # 74 passed · 0 failed
+> bash   scripts/migrate-matrix.sh          # 78 passed · 0 failed
 > bash   scripts/adopt-matrix.sh            # 27 passed · 0 failed
-> python3 scripts/mutation_audit.py         # 23 caught · 0 survived  (~20 min)
-> python3 .claude/skills/_shared/kmpilot_check.py --all   # 21 checks, 0 errors 0 warnings
+> python3 scripts/mutation_audit.py         # 35 caught · 0 survived  (~30 min)
+> python3 .claude/skills/_shared/kmpilot_check.py --all   # 22 checks, 0 errors 0 warnings
 > ```
+>
+> **A green build is not evidence about a target you did not build** (finding 24). This repo's
+> iOS compile was recorded as green in an earlier version of this block and did not reproduce:
+> android `assembleDebug`, `compileKotlinDesktop` and strict `archTest` all pass with `iosMain`
+> broken, because neither of those targets compiles it. Run
+> `compileKotlinIosSimulatorArm64` explicitly before calling a repo green.
 >
 > **NEVER run a matrix while editing what it reads.** `mutation_audit.py` mutates
 > `pipeline/src` in place, and both matrices vendor core from the working tree. Doing this
@@ -97,7 +114,9 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > file a hoisted-state project must not have · **20** `buildFileSpec` short for a *migrated*
 > module · **21** the step brief is where behaviour silently changes · **22** a step completable
 > without ever being opened (+ S5/S6 missing report blurbs) · **23** the app-shell half of
-> Rule 13 that no check inspects.
+> Rule 13 that no check inspects → **check S7 + the `shell` step, 2026-08-08** · **24** the iOS
+> target nobody compiled: `GlobalContext` is not koin-core's native API, so the migration's own
+> iOS glue broke that build while android, desktop and every static gate stayed green.
 >
 > **Findings 15 and 17 are the two that matter most, and neither is a migration bug.** 15 is an
 > *adopt* bug (Phase 2) reachable only from a single-module KMP project; 17 is a *checker* bug
@@ -112,18 +131,21 @@ read .claude/docs/_roadmap/PHASE-6-project-migration.md and continue at step 9
 > plan-confirmation gate and the checkpoint/undo machinery stay strict — this is about scope,
 > not safety.
 >
-> **Six of the 25 hand-built test beds do not exist yet.** Only `T01P05-Monolith` has been
-> built. [PHASE-6-testbed-projects.md](PHASE-6-testbed-projects.md) specifies the rest; **the
-> user builds each one himself in a separate session** — that file is never a work order. Next
-> highest value: **17 `carve-outs`** (must produce zero refusals), **06 `multi-screen-module`**
-> (the only way to fire a mid-rewrite `refuse` on a real repo), **11 `usecase-result`** (an
-> unexercised rewrite cluster and the first real test source sets).
+> **Only `T01P05-Monolith` of the hand-built test beds exists.**
+> [PHASE-6-testbed-projects.md](PHASE-6-testbed-projects.md) specifies the rest; **the user
+> builds each one himself in a separate session** — that file is never a work order. **The user
+> is building the second one now (as of 2026-08-08) and will say when it is ready**; that is what
+> step 9 continues with. Highest value after it: **17 `carve-outs`** (must produce zero
+> refusals), **06 `multi-screen-module`** (the only way to fire a mid-rewrite `refuse` on a real
+> repo), **11 `usecase-result`** (an unexercised rewrite cluster and the first real test source
+> sets).
 >
-> **Convergence is not close.** Seven findings from one repo, against nine from the two before
-> it. The criterion is a repo of a **new shape** producing **zero** new findings; the monolith
-> produced seven, four of them in code written the same day.
+> **Convergence is not close.** The monolith has now produced **eight** findings (10–17 and
+> 18–24 span it), against nine from the two repos before it — and finding 24 came out of the same
+> repo *after* it had been declared green, on the fourth pass over it. The criterion is a repo of
+> a **new shape** producing **zero** new findings.
 >
-> **Still open, deferred on purpose:** **61 of the 74 matrix variants have never been proven
+> **Still open, deferred on purpose:** **61 of the 78 matrix variants have never been proven
 > able to fail** (`python3 scripts/mutation_audit.py --coverage`). Test-bed runs keep changing
 > the code a mutation anchors to, so grinding now buys guards that go stale before the PR.
 > **Sequencing decided: test beds first, then the ~24 `control-*` negative controls before the
@@ -142,10 +164,9 @@ settings that break a migrated feature"*, `577484b` *"Record the first real migr
 resume block"* (findings 1–4, from `bookshelf-featuredir`), then `8537389` *"Catch the migration
 bugs that only a launch would find"* and `14fa79e` *"Prove the guards can fail"* (findings 5–9,
 from `bookshelf`), plus one commit for this block and `d6b7ce6` *"Specify the test-bed projects
-step 9 still needs"*. **Uncommitted on 2026-08-07:** the two report-bug fixes described under
-*Landed 2026-08-07* (`kmpilot_migrate.py`, `kmpilot_plan.py`, `kmpilot_report.py` in
-`pipeline/src`, the regenerated `.claude/`, `kmpilot_report_test.py`, `kmpilot_migrate_test.py`,
-`mutation_audit.py`, and this file). Do not commit or push unless the user says so.
+step 9 still needs"*. Then the two report-bug fixes described under *Landed
+2026-08-07*, and the S7 + `shell`-step work of *Landed 2026-08-08* (findings 23, 13 and 24) at
+the tip. **Nothing has been pushed and no PR is open** — do not push unless the user says so.
 
 | Path | What it is |
 |---|---|
@@ -164,7 +185,7 @@ step 9 still needs"*. **Uncommitted on 2026-08-07:** the two report-bug fixes de
 | `scripts/kmpilot_migrate_test.py` | clean-phase self-test — **needs git** |
 | `scripts/kmpilot_report_test.py` | integrate-phase self-test — **needs git** |
 | `scripts/make-nonconforming-project.sh` | the Stage B fixture generator |
-| `scripts/migrate-matrix.sh` | 66 variants, 24 negative controls |
+| `scripts/migrate-matrix.sh` | 78 variants, 30 negative controls |
 | `scripts/mutation_audit.py` | breaks each fix on purpose, asserts its guard goes red; `--coverage` lists the variants nobody has proven |
 | `.claude/docs/_roadmap/{PHASE-6-project-migration,README}.md` | this file + the status table |
 
@@ -178,8 +199,8 @@ python3 scripts/kmpilot_discover_test.py        # PASS, ~1s
 python3 scripts/kmpilot_plan_test.py            # PASS, ~2s
 python3 scripts/kmpilot_migrate_test.py         # PASS, ~5s (needs git)
 python3 scripts/kmpilot_report_test.py          # PASS, ~10s (needs git)
-bash scripts/migrate-matrix.sh                  # 66 passed · 0 failed (~2 min, builds the fixture)
-python3 scripts/mutation_audit.py               # 7 caught · 0 survived (~15 min, rebuilds the fixture per mutation)
+bash scripts/migrate-matrix.sh                  # 78 passed · 0 failed (~2 min, builds the fixture)
+python3 scripts/mutation_audit.py               # 35 caught · 0 survived (~30 min, rebuilds the fixture per mutation)
 python3 scripts/gen-surfaces.py --check         # .claude/ and pipeline/dist match the source
 python3 .claude/skills/_shared/kmpilot_check.py --all   # 0 errors 0 warnings
 claude plugin validate ./pipeline/dist --strict         # passed
@@ -1134,6 +1155,122 @@ Verified: **8 new matrix variants, 5 of them negative controls** — `carve-mono
 `control-android-resources-application` — each with a registered mutation, and each mutation
 watched failing against a guard first proven green. `migrate-matrix.sh` is **74 variants**.
 
+### Landed 2026-08-08 — step 9, findings 23 and 13: the app-shell half of Rule 13
+
+**Rule 13 was only ever half-enforced, and the migration is what made that cost something.**
+`check_r13` iterates a *feature's* sources, so it enforces "a feature must not nest a
+Scaffold" and nothing else. The other half — *the shell must provide the safe area, because
+`XScreen` and `XTopAppBar` add none by design* — was checked on no project at all. Three
+migrated features were rewritten to that contract, promoted into `managedFeatures` and graded
+strictly in a repo whose shell is `MaterialTheme { Surface { Column { … } } }`; the tab row
+drew under the status bar and the top edge of every button was untappable, with
+`assembleDebug`, strict `archTest`, `kmpilot_check --all` at 0 errors and the iOS + desktop
+compiles all green.
+
+**New repo-scoped check `S7`, and a project-level `shell` step**, exactly as the fix was
+specified under finding 23. Both halves were needed: a check with no step is a finding nobody
+can act on, and a step with no check is a step nobody can verify.
+
+| Call | Why |
+|---|---|
+| **it detects the absence of BOTH mechanisms, never grades which one** | of the four shells surveyed, three conform in three different ways — `XScaffold` + `windowInsetsPadding`, `Scaffold` + `contentWindowInsets(0,0,0,0)` + `safeDrawing`, and a **bare `Scaffold` on its default `systemBars`** — and only the fourth has neither. Grading the mechanism fails `bookshelf-featuredir`, which works. Wrongly failing an already-promoted project is the failure this phase has paid for twice (findings 1 and 18) |
+| **repo-scoped, like `S3` — one row for the project** | attached per feature it *is* finding 1: a project-level fact repeated N times that no edit to any feature can clear, so `complete` refuses, `--force` follows, and promotion refuses the forced sign-off. The migrate branch of `verify_step` was filtering nothing, so this actually happened the moment S7 landed — **caught by `kmpilot_migrate_test.py` within a minute**, which is the advisory machinery's own test earning its place |
+| **severity `warning`** | it is real work, but a pre-existing shell that never met a contract nobody checked is not an error in a project that has not adopted the contract yet |
+| **`\w*Scaffold\s*[({]`** | `\bScaffold` cannot match `XScaffold` (finding 6's near-miss), and `Scaffold { … }` — the trailing-lambda-only form — has no parentheses at all (finding 4's near-miss). **The test found the second one**: the `scaffold-only` control failed on the first run |
+| **the `shell` step is ranked first and depended on by nothing** | first because a feature rewritten to `XScreen` inherits the shell's insets, so fixing the shell afterwards is promoting features against a broken one. Not an edge because one refused shell step would then block every feature in the project — the wrong-refusal failure invariant 3 exists to prevent. **The rank needed its own slot**: a `shell` step's subject is the app module, which depends on everything and therefore sorted *last* in the topological order, i.e. after every migrate |
+| **derived from the S7 row, never from re-reading the shell** | invariant 6. It also gives "already satisfied" for free: no row, no step, so `bookshelf` and KMPilot itself see nothing |
+| **`verify shell` re-runs S7** | asking the shell a second way is how a step becomes completable while the checker still reports the finding |
+
+**Three bugs in the plumbing this exposed, none of them the shell:**
+
+- **`verify_step` never filtered the checker's rows to the feature it was verifying.** Harmless
+  while every repo-scoped check needed a `core/` directory to fire; the moment a project-level
+  check applied to every repo, every feature everywhere became uncompletable.
+- **discovery dropped repo-scoped rows on the floor.** `if v["feature"]:` — and `"-"` is
+  truthy, so they landed in a `findings["-"]` bucket no feature ever read. `S3` had been
+  invisible to every discovery report since discovery existed.
+- **discovery ran the checker only `if gradable:`.** A single-module project has no gradable
+  feature, so the project-level checks never ran — on precisely the shape whose shell is least
+  likely to be wired. **Finding 11 exactly, one layer up**: that finding moved the module-level
+  *notes* out of the per-feature loop and left the *checker call itself* gated behind the same
+  question.
+
+**Finding 13 fixed in the same pass, because the shell step forced it.** `next` printed the
+step title and nothing else, so a step whose entire content lives in `detail` — a `hoist`'s
+symbols, a `carve`'s ordered steps and `buildFileSpec`, a `shell`'s five-step wiring — read as
+having no work. `print_work_detail()` prints all of it, from `next` **and** from `checkpoint`
+(where the work is actually picked up). A work list nobody is shown has already cost this phase
+once.
+
+**Also fixed: the report never mentioned a carve or a shell.** `SHARED_STEP_KINDS` was
+`("hoist", "extract", "relocate")`, so a run that created three Gradle modules and rewired the
+app shell rendered a `MIGRATION-REPORT.md` naming none of it. Widened, and the section retitled
+*Structural steps*. The `RULE_WAS` coverage test now derives from `REPO_CHECKS` too — the
+repo-scoped half had been a hand-kept `{"S3"}`, which is the same gap that let S5 and S6 ship
+printing *"see kmpilot_check.py"* at the reader.
+
+**One decorative assertion, caught by the audit as usual.** Two of the new shell controls used
+`reject '^step …'`, which greps `$OUT` — and `invariant` leaves `$OUT` holding **discovery**
+output, so a `step` assertion there can never match and can never fail. `expect_plan` existed
+for exactly this reason and had no negative twin; there is a `reject_plan` now. **Only the
+mutation found it** (`shell-step-always-planned` survived), which is the seventh instance of
+this shape in the phase and the whole argument for `mutation_audit.py`.
+
+Verified: **9 new mutations, each caught** — S7 never firing, S7 demanding a Scaffold
+specifically, the parens-only regex, the per-feature attachment, the shell step ordered after
+the migrates, the shell step planned unconditionally, `verify shell` asserting nothing,
+discovery dropping the rows, and the checker gated behind having a feature. `migrate-matrix.sh`
+is **78 variants** (`shell-no-safe-area`, `shell-no-feature-modules` — a project with nothing
+under `feature/` at all — plus the two shape controls). `kmpilot_check.py` is **22 checks**;
+KMPilot's own six features stay 0 errors 0 warnings. All five self-tests, `adopt-matrix.sh`
+27/0, and `gen-surfaces.py --check` green.
+
+### Landed 2026-08-08 — finding 24: the target nobody compiled
+
+**The shell fix was applied to `T01P05-Monolith` for real, and the build that followed found
+something the earlier run had recorded as green.** `compileKotlinIosSimulatorArm64` failed:
+
+```
+e: MainViewController.kt:5:30 Unresolved reference 'GlobalContext'.
+```
+
+Attributed with a worktree at the pre-shell commit: **it fails there too**, so the shell step
+did not cause it. `MainViewController.kt` was written by the migration's own
+`extract-composeApp` step, with a `GlobalContext.getOrNull() == null` guard around
+`initKmpilotKoin()`. `org.koin.core.context.GlobalContext` is **not** in koin-core's
+common/native API in Koin 4.x — koin-core *is* on the iOS compile classpath
+(`koin-core-iossimulatorarm64:4.2.1`), the symbol simply is not.
+
+**Two things this says, and the second is the uncomfortable one.**
+
+The guidance gap is easy: adopt writes `initKmpilotKoin()` and its doc comment said only *"iOS
+— from your entry point: `initKmpilotKoin()`"*, so the agent invented a guard. `phase-3-clean.md`
+now gives the one shape that compiles — `ComposeUIViewController(configure = { initKmpilotKoin() })
+{ App() }`, which is what KMPilot's own template does — names `GlobalContext` as the trap, and
+says to compile **all three** targets before calling a run finished. `install.sh`'s comment now
+shows the same idiom.
+
+The uncomfortable half: **this repo's iOS compile was recorded as green in the resume block and
+does not reproduce.** Android `assembleDebug`, `compileKotlinDesktop`, strict `archTest` and
+`kmpilot_check --all` at 0 errors all pass with iOS broken — because neither android nor desktop
+ever compiles `iosMain`. A green *compile* is not evidence about a target you did not build, in
+exactly the way a green *static check* is not evidence about a build. Both are now written down
+in the phase's own instructions rather than assumed.
+
+Fixed in the test bed and re-verified: `compileKotlinIosSimulatorArm64` **and**
+`compileKotlinIosArm64` both build, android `assembleDebug` builds, `compileKotlinDesktop` and
+strict `archTest` pass, `kmpilot_check --all` is 22 checks · **0 errors** · 3 warnings (the three
+known advisory I4 rows for hoisted-state navigation).
+
+**Also recorded, not fixed: regenerating the report after the plan is re-derived loses the
+structural steps that already ran.** The `carve` and `extract` steps that built this project's
+three modules are no longer in the plan — the features are modules now, so nothing derives those
+steps — and `MIGRATION-REPORT.md`, which is regenerated in full from the current plan, therefore
+no longer names them. The ledger keeps them (`stale-ledger-entries`), so nothing is lost from
+disk; it is the *artifact a reviewer reads* that thins out. Fixing it means rendering the report
+from the ledger's history rather than the live plan, which is a design change and not this
+session's work.
+
 ### Landed 2026-08-07 — the two report bugs from the `bookshelf` run
 
 Both were recorded rather than fixed when that run closed, and neither needs a repo to reproduce.
@@ -1391,7 +1528,7 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `pipeline/src/skills/kmp-to-kmpilot/**` | **new** skill (Stage B) → generates `.claude/skills/` | OVERRIDE |
 | `pipeline/src/skills/android-to-kmpilot/**` | **new** skill (Stage C) | OVERRIDE |
 | `pipeline/src/skills/_shared/kmpilot_discover.py` | ✅ **new** — the discovery pass (step 2); schema 2 adds `findingRows` (step 4) | OVERRIDE |
-| `pipeline/src/skills/_shared/kmpilot_plan.py` | ✅ **new** — plan generation, confirmation, the resume ledger (steps 3–4) and mid-rewrite refusal via `--refuse`/`--unrefuse` (step 5) | OVERRIDE |
+| `pipeline/src/skills/_shared/kmpilot_plan.py` | ✅ **new** — plan generation, confirmation, the resume ledger (steps 3–4), mid-rewrite refusal via `--refuse`/`--unrefuse` (step 5), and the project-level `shell` step derived from S7, ranked ahead of every migrate (step 9 finding 23) | OVERRIDE |
 | `pipeline/src/skills/_shared/kmpilot_migrate.py` | ✅ **new** — the clean phase's execution envelope: checkpoint branch, per-step checkpoints, restore, verify, complete, refuse (steps 6–7) | OVERRIDE |
 | `pipeline/src/skills/_shared/kmpilot_report.py` | ✅ **new** — the integrate phase: promotion, `MIGRATION-REPORT.md`, the closing step (step 8) | OVERRIDE |
 | `pipeline/src/skills/kmp-to-kmpilot/phases/phase-3-clean.md` | ✅ **new** — the per-step loop and the cluster→agent map | OVERRIDE |
@@ -1401,7 +1538,7 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `scripts/kmpilot_report_test.py` | ✅ **new** — integrate-phase self-test (needs git) | stripped on install |
 | `scripts/kmpilot_discover_test.py` | ✅ **new** — discovery self-test | stripped on install |
 | `scripts/kmpilot_plan_test.py` | ✅ **new** — plan self-test | stripped on install |
-| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1); the nav-host fallback matches wrappers so `XNavHost` no longer suppresses I4 (finding 6); **new check S5** — a module declaring `@Serializable` must apply the serialization plugin (finding 8); **new check S6** — a feature's `*Screen.kt` must live under `presentation/ui/`, because R3/R11a/R12/R13/S1 are all path-gated on that layout and a flat feature has them **skipped, not passed** (finding 17). *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
+| `.claude/skills/_shared/kmpilot_check.py` | ✅ `append_managed_features()` — append-only, idempotent, re-parsed before saving; `actionable()` + the `advisory` flag (step 9 finding 1); the nav-host fallback matches wrappers so `XNavHost` no longer suppresses I4 (finding 6); **new check S5** — a module declaring `@Serializable` must apply the serialization plugin (finding 8); **new check S6** — a feature's `*Screen.kt` must live under `presentation/ui/`, because R3/R11a/R12/R13/S1 are all path-gated on that layout and a flat feature has them **skipped, not passed** (finding 17); **new repo-scoped check S7** — the app shell must provide a safe area at all, the half of Rule 13 `check_r13` cannot see because it iterates a *feature's* sources (finding 23), plus the `REPO_CHECKS` registry the report's blurb coverage now derives from. *Per-feature machine-readable work list turned out to exist already: the report carries `feature`/`rule`/`file`/`line`/`severity` + `preExistingFeatures`, and discovery consumes it in-process — no other checker change needed* | OVERRIDE |
 | `.claude/skills/_shared/patterns.md` | migration entry alongside create/modify | OVERRIDE |
 | `CLAUDE.md` | mandatory-skill table gains both commands | TIER1 (merged) |
 | `install.sh` | `migrate-feature` → final name in both refusal messages (:655, :715); ✅ `adopt_root_declares_agp()` — the vendored core binds to the host's AGP without naming a version when the root already put it on the classpath (step 9 finding 15) | not delivered |
@@ -1409,7 +1546,7 @@ reasoning is not re-derived; **decided at Stage C kickoff, not now**:
 | `scripts/make-nonconforming-project.sh` | **new** — Stage B fixture: several features + shared code | stripped on install |
 | `scripts/make-android-target.sh` | **new** — Stage C Android fixture (Compose + Hilt + Retrofit) | stripped on install |
 | `scripts/mutation_audit.py` | ✅ **new** — the mutation harness: every guard has to be watched failing before it counts. `--coverage` is the suite's honest status | stripped on install |
-| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (66 variants) | stripped on install |
+| `scripts/migrate-matrix.sh` | ✅ **new** — variant matrix: refusal, plan, clean- and integrate-phase quality under test (78 variants) | stripped on install |
 | `.claude/docs/_roadmap/PARKED.md` | migrate entry resolved; full-app rejection recorded as reversed | not delivered |
 
 Skills are OVERRIDE tier, so both commands reach every existing install on `./update.sh` with no
@@ -1455,8 +1592,12 @@ commit only `.claude/`.
    ledger: `finish` is idempotent and `verify report` is what says a run is actually closed.)*
 9. Run against `bookshelf-featuredir` ✅, `bookshelf` ✅, `Kickoff26` ✅ (refuses, correctly), and
    the projects you build by hand ← **in progress**. `T01P05-Monolith` (tier-1 shape ★05, the
-   first hand-built bed) is mid-run: 4 of 8 steps done, the **`carve` step** built for it, and
-   findings 10–17 out of it. Transcript of each goes in the PR.
+   first hand-built bed) is **complete**: 9 steps done including the `shell` step, three features
+   at 0 actionable findings and promoted, android + desktop + **both iOS targets** compiling,
+   strict `archTest` green — and findings **10–24** out of it, the `carve` step and check S7 built
+   for it. The on-device tap confirmation of finding 23 is still outstanding (no device on this
+   machine). The **second hand-built bed is being built by the user now**. Transcript of each goes
+   in the PR.
 
 **Stage C** — only after Stage B is confirmed
 
@@ -1497,8 +1638,10 @@ commit only `.claude/`.
       day it landed; step 8 found six more of the same shape. The only proof is breaking the
       code and watching the guard go red — **against a guard that was green to begin with**,
       which the harness did not check until step 9 finding 14. `scripts/mutation_audit.py`
-      does both now, and `--coverage` prints the honest state: **as of 2026-08-07, 13 of 74
-      variants have a registered mutation — 61 are unverified.** Closing this criterion means
+      does both now, and `--coverage` prints the honest state: **as of 2026-08-08, 17 of 78
+      variants have a registered mutation — 61 are unverified.** (The unverified count did not
+      move: the four shell variants added this session each arrived with a mutation, so the
+      backlog neither grew nor shrank.) Closing this criterion means
       registering a mutation per variant and every one of them being caught, which is real
       remaining work, not a formality.
 - [ ] Phase 3 unpark decision recorded in `PARKED.md` and the README status table.
@@ -1521,7 +1664,7 @@ commit only `.claude/`.
 # ── steps 1-4, landed: discovery writes nothing; the plan writes one file ───
 python3 scripts/kmpilot_discover_test.py                   # every classifier fires, ~1s
 python3 scripts/kmpilot_plan_test.py                       # every step kind, the gate, the ledger
-bash scripts/migrate-matrix.sh                             # 66 variants, 24 negative controls
+bash scripts/migrate-matrix.sh                             # 78 variants, 30 negative controls
 scripts/make-nonconforming-project.sh --force              # regenerate the fixture (offline)
 
 python3 .claude/skills/_shared/kmpilot_discover.py --root ~/KMPProjects/bookshelf-featuredir

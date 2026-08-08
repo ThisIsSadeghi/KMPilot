@@ -407,12 +407,31 @@ EXPECTED = {
     "S3": ("XButton.kt", "error"),
     "S4": ("ProbeScreen.kt", "warning"),
     "S6": ("StrayScreen.kt", "error"),
+    # Repo-scoped, so it fires on the fixture's app module, not on `probe`. The fixture's
+    # shell deliberately has neither mechanism — the shape has to be IN the fixture or the
+    # rule is not testable at all, which is the lesson S6 cost (a mutation that never
+    # fires survives against a fixture with no instance of the shape).
+    "S7": ("composeApp", "warning"),
     "I1": ("settings.gradle.kts", "error"),
     "I2": ("composeApp/build.gradle.kts", "error"),
     "I3": ("initKoin.kt", "error"),
     "I4": ("BaseAppNavHost.kt", "error"),
 }
-NO_LINE_EXPECTED = {"I1", "I2", "I3", "I4", "R12"}
+NO_LINE_EXPECTED = {"I1", "I2", "I3", "I4", "R12", "S7"}
+
+# S7 fires only when the app module has NEITHER mechanism. Three real shells conform in
+# three different ways and one of them (a bare `Scaffold` on its default `systemBars`)
+# would fail any check that graded *which* mechanism — so each of these must be silent,
+# and wrongly failing a project that works is the failure this phase has paid for twice.
+SHELL_SHAPES = {
+    "scaffold-and-insets": (
+        "XScaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) { _ ->\n"
+        "        Content(Modifier.windowInsetsPadding(WindowInsets.safeDrawing))\n"
+        "    }"
+    ),
+    "scaffold-only": "Scaffold { padding -> Content(Modifier.padding(padding)) }",
+    "insets-only": "Column(Modifier.systemBarsPadding()) { Content() }",
+}
 
 
 def main() -> int:
@@ -485,6 +504,38 @@ def main() -> int:
             failures.append(f"probe exit code {code}, expected 1")
         if any("commonTest" in v["file"] for v in report["violations"]):
             failures.append("violations reported inside a test source set")
+
+        # ── S7: the three conforming shells must each be silent ────────────
+        shell_path = fixture.root / f"composeApp/src/commonMain/kotlin/{PKG}/app/App.kt"
+        for label, body in SHELL_SHAPES.items():
+            shell_path.write_text(
+                f"package {PKG}.app\n\n@Composable\nfun App() {{\n    {body}\n}}\n",
+                encoding="utf-8",
+            )
+            _, shaped = run("probe")
+            fired = [v for v in shaped["violations"] if v["rule"] == "S7"]
+            if fired:
+                failures.append(
+                    f"S7 fired on the {label} shell, which provides the safe area: "
+                    f"{fired[0]['message']}"
+                )
+        # A `Scaffold` named only in a comment or a string is not a shell: the mechanisms
+        # are matched against code with comments and literals blanked, so this must still
+        # fire. Without it, "the word appears in the app module" would pass every test.
+        shell_path.write_text(
+            f"package {PKG}.app\n\n"
+            "// TODO: wrap this in a Scaffold and add windowInsetsPadding(safeDrawing)\n"
+            f'const val NOTE = "Scaffold + windowInsetsPadding go here"\n\n'
+            "@Composable\nfun App() {\n    Content()\n}\n",
+            encoding="utf-8",
+        )
+        _, commented = run("probe")
+        if not [v for v in commented["violations"] if v["rule"] == "S7"]:
+            failures.append(
+                "S7 stayed silent on a shell that only mentions `Scaffold` in a comment and "
+                "a string literal — the mechanisms must be matched in code, not in prose"
+            )
+        shell_path.unlink()
 
         # ── --baseline downgrades and exits 0 ──────────────────────────────
         code, report = run("probe", "--baseline")

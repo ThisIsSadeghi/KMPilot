@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # importing a sibling must not litter scripts/ with __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from kmpilot_discover_test import Fixture, file_snapshot  # noqa: E402
+from kmpilot_discover_test import PKG, Fixture, file_snapshot  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 PLAN = REPO / ".claude/skills/_shared/kmpilot_plan.py"
@@ -108,10 +108,11 @@ def main() -> int:
         # ── every step kind fires ───────────────────────────────────────────
         kinds = {s["kind"] for s in report["steps"]}
         f.want(
-            kinds == {"hoist", "extract", "relocate", "migrate", "report"},
+            kinds == {"shell", "hoist", "extract", "relocate", "migrate", "report"},
             f"step kinds {sorted(kinds)} — every kind must fire on this fixture",
         )
         for step_id in (
+            "shell",
             "hoist-core-model",
             "hoist-core-netcall",
             "hoist-core-widgets",
@@ -211,6 +212,39 @@ def main() -> int:
                 f"{steps.get(consumer, {}).get('dependsOn')}",
             )
         f.want(order[-1] == "report", f"the report step must be last: {order}")
+
+        # ── the shell step: first, and depended on by nothing ────────────────
+        # Its subject is the app module, which depends on everything and therefore sorts
+        # LAST in the topological module order — so without the project-level slot the
+        # shell landed after every migrate, which is the one thing finding 23 forbids:
+        # features rewritten to `XScreen` and promoted against a shell providing no
+        # safe area.
+        migrates = [s for s in steps if steps[s]["kind"] == "migrate"]
+        f.want(
+            all(position["shell"] < position[m] for m in migrates),
+            f"the shell step must precede every migrate: {order}",
+        )
+        # Rank, not a dependency edge. An edge would let one refused shell step block
+        # every feature in the project — the wrong-refusal failure invariant 3 exists to
+        # prevent. A feature rewritten before the shell is fixed still conforms.
+        f.want(
+            not any("shell" in steps[s]["dependsOn"] for s in steps),
+            "no step may declare the shell step as a dependency: "
+            f"{[(s, steps[s]['dependsOn']) for s in steps if 'shell' in steps[s]['dependsOn']]}",
+        )
+        shell = steps.get("shell", {})
+        f.want(
+            shell.get("detail", {}).get("finding", {}).get("rule") == "S7",
+            "the shell step must carry the S7 row it was derived from, not a re-reading of "
+            f"the shell: {shell.get('detail', {}).get('finding')}",
+        )
+        f.want(
+            shell.get("detail", {}).get("agent") == "integrator"
+            and len(shell.get("detail", {}).get("steps") or []) >= 3,
+            "the shell step must route to integrator and carry its ordered work: "
+            f"{shell.get('detail', {}).get('agent')!r} "
+            f"{len(shell.get('detail', {}).get('steps') or [])} step(s)",
+        )
         f.want(
             all(
                 not any(d.startswith("migrate-") for d in steps[s]["dependsOn"])
@@ -575,6 +609,31 @@ fun LatecomerScreen() = Unit
             messy_step["status"] == "done" and messy_step["statusSource"] == "derived",
             f"a promoted feature must be done and stay done: {messy_step['status']} / "
             f"{messy_step['statusSource']}",
+        )
+
+        # ── a shell that already conforms earns no step at all ───────────────
+        # The negative half, and the one that decides whether this is a rule or a
+        # nuisance: `bookshelf` and KMPilot itself must see nothing. Asserted last
+        # because it changes the step list, which lapses confirmation by design.
+        (root / f"shared/src/commonMain/kotlin/{PKG}/app/App.kt").write_text(
+            f"package {PKG}.app\n\n"
+            "@Composable\n"
+            "fun App() {\n"
+            "    XScaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) { _ ->\n"
+            "        BaseAppNavHost(\n"
+            "            modifier = Modifier.windowInsetsPadding(\n"
+            "                WindowInsets.safeDrawing.only(WindowInsetsSides.Top),\n"
+            "            ),\n"
+            "        )\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        fixed, _ = plan_json(root)
+        f.want(
+            not any(s["kind"] == "shell" for s in fixed["steps"]),
+            "a shell that provides the safe area must produce no shell step: "
+            f"{[s['id'] for s in fixed['steps'] if s['kind'] == 'shell']}",
         )
 
     print(
